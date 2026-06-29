@@ -2817,10 +2817,47 @@ ${cleanedBody}
     }
   };
 
+  // Regex validator cho LaTeX cơ bản
+  const validateLatexSyntax = (latexCode: string): string[] => {
+    const errors: string[] = [];
+    
+    // Kiểm tra matching \begin và \end
+    const beginMatches = [...latexCode.matchAll(/\\begin\{([^}]+)\}/g)];
+    const endMatches = [...latexCode.matchAll(/\\end\{([^}]+)\}/g)];
+    
+    if (beginMatches.length !== endMatches.length) {
+      errors.push(`Lỗi cấu trúc: Số lượng thẻ \\begin (${beginMatches.length}) và \\end (${endMatches.length}) không khớp nhau.`);
+    } else {
+      // Kiểm tra tên environment có khớp không (cơ bản)
+      const beginNames = beginMatches.map(m => m[1]);
+      const endNames = endMatches.map(m => m[1]);
+      for (const endName of endNames) {
+         if (!beginNames.includes(endName)) {
+             errors.push(`Lỗi môi trường: Có thẻ \\end{${endName}} nhưng không tìm thấy \\begin{${endName}} tương ứng.`);
+         }
+      }
+    }
+    
+    // Kiểm tra công thức toán học chưa đóng ($)
+    const singleDollarCount = (latexCode.match(/(?<!\\)\$/g) || []).length;
+    if (singleDollarCount % 2 !== 0) {
+      errors.push("Lỗi toán học: Phát hiện thẻ công thức toán ($) chưa được đóng/mở (số lượng thẻ $ là số lẻ).");
+    }
+    
+    return errors;
+  };
+
   const downloadAsLatex = async () => {
     const rawText = overleafCode.trim();
     if (!rawText) {
       triggerToast("Chưa có nội dung để tải về!", false);
+      return;
+    }
+
+    // 1. Kiểm tra cú pháp trước khi gọi API
+    const syntaxErrors = validateLatexSyntax(rawText);
+    if (syntaxErrors.length > 0) {
+      triggerToast("Phát hiện lỗi cú pháp LaTeX: " + syntaxErrors[0], false);
       return;
     }
 
@@ -2838,6 +2875,7 @@ ${cleanedBody}
 
     try {
       // Bước 1: Thử gọi API local (chỉ hoạt động khi có backend Express server đang chạy)
+      let apiSuccess = false;
       try {
         const response = await fetch("/api/compile-latex", {
           method: "POST",
@@ -2857,8 +2895,9 @@ ${cleanedBody}
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
-            triggerToast("Đã tải về tài liệu PDF hoàn chỉnh!", true);
+            triggerToast("Đã tải về tài liệu PDF hoàn chỉnh qua API!", true);
             await incrementLatexCount();
+            apiSuccess = true;
             return;
           }
         }
@@ -2866,46 +2905,60 @@ ${cleanedBody}
         // Network error — server không tồn tại (trường hợp GitHub Pages) — fallthrough
       }
 
-      // Bước 2: Server không có (GitHub Pages / static hosting)
-      // Dùng form submit đến texlive.net — đây là cách DUY NHẤT hoạt động được
-      // do texlive.net chặn CORS fetch, nhưng cho phép form POST từ trình duyệt.
-      console.log("[PDF] Môi trường static (GitHub Pages). Gửi form đến texlive.net để biên dịch...");
-      triggerToast("Đang gửi yêu cầu biên dịch tới texlive.net...", true);
+      if (!apiSuccess) {
+        // Bước 2: Dùng html2pdf.js để kết xuất PDF trực tiếp từ UI (Client-side rendering)
+        console.log("[PDF] Môi trường static (GitHub Pages). Dùng html2pdf.js để render PDF tại client...");
+        triggerToast("Server không khả dụng. Đang dùng trình kết xuất nội bộ để tạo PDF (không nhảy tab)...", true);
+        
+        // Dynamic import to keep bundle small
+        const html2pdf = (await import("html2pdf.js")).default;
+        
+        // Tìm element preview Word (chứa mã HTML đã render)
+        const previewElements = document.querySelectorAll(".preview-content");
+        let targetPreview: HTMLElement | null = null;
+        
+        // Tìm element chứa class dangerouslySetInnerHTML hợp lệ
+        previewElements.forEach((el) => {
+           if (el.innerHTML.includes("<p") || el.innerHTML.includes("<table") || el.innerHTML.includes("katex")) {
+              targetPreview = el as HTMLElement;
+           }
+        });
+        
+        if (!targetPreview && previewElements.length > 0) {
+           targetPreview = previewElements[0] as HTMLElement;
+        }
 
-      const formattedLatex = rawText.replace(/\r?\n/g, "\r\n");
-
-      const form = document.createElement("form");
-      form.method = "POST";
-      form.action = "https://texlive.net/cgi-bin/latexcgi";
-      form.target = "_blank"; // Mở kết quả ở tab mới để tránh CORS
-
-      const fields: Record<string, string> = {
-        "filecontents[]": formattedLatex,
-        "filename[]": "document.tex",
-        "engine": "pdflatex",
-        "return": "pdf",
-      };
-
-      for (const [key, value] of Object.entries(fields)) {
-        const input = document.createElement("input");
-        input.type = "hidden";
-        input.name = key;
-        input.value = value;
-        form.appendChild(input);
+        if (!targetPreview) {
+          throw new Error("Không tìm thấy nội dung xem trước để tạo PDF nội bộ.");
+        }
+        
+        // Clone element để thiết lập styles in ấn mà không ảnh hưởng UI
+        const clone = targetPreview.cloneNode(true) as HTMLElement;
+        clone.style.display = "block";
+        clone.style.position = "absolute";
+        clone.style.left = "-9999px";
+        clone.style.top = "0";
+        clone.style.width = "800px";
+        clone.style.backgroundColor = "white";
+        clone.style.color = "black";
+        clone.style.padding = "40px"; // Lề trang PDF
+        
+        document.body.appendChild(clone);
+        
+        const opt: any = {
+          margin:       10,
+          filename:     'tai_lieu_latex.pdf',
+          image:        { type: 'jpeg', quality: 0.98 },
+          html2canvas:  { scale: 2, useCORS: true, letterRendering: true },
+          jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        };
+        
+        await html2pdf().set(opt).from(clone).save();
+        document.body.removeChild(clone);
+        
+        triggerToast("Đã tạo và tải xuống PDF nội bộ thành công!", true);
+        await incrementLatexCount();
       }
-
-      document.body.appendChild(form);
-      form.submit();
-
-      setTimeout(() => {
-        if (form.parentNode) document.body.removeChild(form);
-      }, 1000);
-
-      triggerToast(
-        "PDF đã được mở ở tab mới! Nhấn Ctrl+S (hoặc Cmd+S trên Mac) để lưu về máy.",
-        true
-      );
-      await incrementLatexCount();
 
     } catch (err) {
       console.error("PDF Compilation failed:", err);
