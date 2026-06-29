@@ -1,0 +1,6 @@
+{
+  "name": "LaTeX AI sang Word Equation",
+  "description": "Bộ công cụ chuyển đổi tài liệu LaTeX và công thức toán học từ AI sang định dạng Microsoft Word.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

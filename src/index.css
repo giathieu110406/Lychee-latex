@@ -1,0 +1,169 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import "katex/dist/katex.min.css";
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Space Grotesk", sans-serif;
+}
+
+/* Custom styles for preview container to match Word typography standard */
+.preview-content {
+  font-size: 13pt !important;
+  line-height: 1.15 !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  user-select: none !important;
+}
+
+.preview-content a {
+  color: #2563eb !important;
+  text-decoration: underline !important;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
+  user-select: text !important;
+}
+
+.preview-content a:hover {
+  color: #1d4ed8 !important;
+}
+
+.preview-content * {
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  user-select: none !important;
+}
+
+/* Allow selection and pointer-events specifically on links and sub-elements of links */
+.preview-content a * {
+  pointer-events: auto !important;
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
+  user-select: text !important;
+}
+
+.preview-content math {
+  font-size: 1.15em;
+  max-width: 100%;
+}
+
+/* Ensure math formulas do not cause horizontal layout break on mobile and iPads */
+.katex, 
+.katex-display, 
+.katex-custom-wrapper {
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.katex-display,
+div.katex-custom-wrapper {
+  display: block !important;
+  text-align: center;
+  margin: 0.8em 0;
+}
+
+/* Hide background scrollbars styling but keep functionality */
+.katex-custom-wrapper::-webkit-scrollbar,
+.katex::-webkit-scrollbar,
+.katex-display::-webkit-scrollbar {
+  height: 4px;
+}
+.katex-custom-wrapper::-webkit-scrollbar-thumb,
+.katex::-webkit-scrollbar-thumb,
+.katex-display::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 2px;
+}
+
+.preview-content p {
+  line-height: 1.15 !important;
+  font-size: 13pt !important;
+  margin-bottom: 0.75em;
+  word-break: break-word;
+}
+
+.preview-content ul {
+  list-style-type: disc !important;
+  margin-left: 1.8em;
+  margin-bottom: 0.75em;
+}
+
+.preview-content ol {
+  list-style-type: decimal !important;
+  margin-left: 1.8em;
+  margin-bottom: 0.75em;
+}
+
+.preview-content li {
+  line-height: 1.15 !important;
+  font-size: 13pt !important;
+  display: list-item !important;
+  margin-bottom: 0.3em;
+}
+
+.preview-content strong, .preview-content b {
+  font-weight: 700 !important;
+}
+
+.preview-content em, .preview-content i {
+  font-style: italic !important;
+}
+
+.preview-content blockquote {
+  border-left: 3px solid #3b82f6;
+  padding-left: 0.8em;
+  color: #4b5563;
+  margin: 0.5em 0;
+}
+
+.preview-content code {
+  background: #f3f4f6;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+.preview-content .katex-display {
+  margin: 0.8em 0;
+  text-align: center;
+}
+
+/* Premium table rendering style for paste & preview standard */
+.preview-content table {
+  width: auto;
+  min-width: 50%;
+  max-width: 100%;
+  border-collapse: collapse;
+  margin: 1.25em 0;
+  border: 1px solid #cbd5e1;
+  font-size: 11pt !important;
+}
+
+.preview-content th,
+.preview-content td {
+  border: 1px solid #cbd5e1;
+  padding: 8px 14px;
+  text-align: left;
+  line-height: 1.2 !important;
+}
+
+.preview-content th {
+  background-color: #f1f5f9;
+  font-weight: 700 !important;
+  color: #1e293b;
+}
+
+.preview-content tr:nth-child(even) {
+  background-color: #f8fafc;
+}
+

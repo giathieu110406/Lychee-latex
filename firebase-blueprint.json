@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "user": {
+      "title": "User Profile",
+      "description": "User account registration and request tracking",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "queryCount": { "type": "integer" },
+        "latexCount": { "type": "integer" },
+        "examCount": { "type": "integer" },
+        "promptCount": { "type": "integer" },
+        "lastLatexResetDate": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "status", "queryCount", "latexCount", "examCount", "promptCount", "createdAt"]
+    },
+    "feedback": {
+      "title": "User Feedback",
+      "description": "User contributions, suggestions, ideas and bug reports",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "feedbackText": { "type": "string" },
+        "type": { "type": "string", "enum": ["bug", "request", "suggestion", "other"] },
+        "rating": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "version": { "type": "string" },
+        "replyText": { "type": "string" },
+        "replyAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "feedbackText", "type", "createdAt", "version"]
+    },
+    "notification": {
+      "title": "System / Personal Notification",
+      "description": "System notices and personal feedback replies sent to users",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "type": { "type": "string", "enum": ["system", "user", "feedback_reply"] },
+        "targetUid": { "type": "string" },
+        "targetEmail": { "type": "string" },
+        "senderName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "content", "type", "targetUid", "targetEmail", "senderName", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "user",
+      "description": "User collection storing role, approval status and query usage counters"
+    },
+    "/feedbacks/{feedbackId}": {
+      "schema": "feedback",
+      "description": "Feedback collection storing user suggestions, ratings and replies"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "notification",
+      "description": "General system notifications or specific replies to user's feedback submissions"
+    }
+  }
+}
