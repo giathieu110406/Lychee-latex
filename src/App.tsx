@@ -3589,6 +3589,14 @@ ${cleanedBody}
           <div className="absolute top-0 left-0 w-full h-1.5 bg-linear-to-r from-blue-500 via-indigo-500 to-emerald-500"></div>
 
           <div className="text-center mb-6">
+            <div className="flex justify-center mb-4">
+              <img
+                src="/logo.svg"
+                alt="Late2Word Converter Logo"
+                className="w-20 h-20 rounded-2xl shadow-xl border border-slate-700/50 object-contain hover:scale-105 transition-transform duration-300"
+                referrerPolicy="no-referrer"
+              />
+            </div>
             <h2 className="text-2xl font-bold tracking-tight text-white mb-1.5 font-display">
               Late2Word Converter
             </h2>
@@ -3778,8 +3786,26 @@ ${cleanedBody}
       {/* Top Premium Navigation Bar - sậm màu (trừ màu đen), sang trọng */}
       <nav className="w-full bg-gradient-to-r from-violet-100 via-sky-50 to-indigo-100 border-b border-indigo-200/50 text-slate-800 shadow-xs sticky top-0 z-40 select-none">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 md:px-10 lg:px-12 py-3 md:py-4 flex flex-row items-center justify-between gap-3">
-          {/* TRÁI: phần tên tài khoản và hình ảnh */}
-          <div className="flex items-center gap-2.5 select-none">
+          {/* TRÁI: Logo thương hiệu & Avatar người dùng */}
+          <div className="flex items-center gap-4 select-none">
+            {/* Logo thương hiệu */}
+            <div className="flex items-center gap-2">
+              <img
+                src="/logo.svg"
+                alt="Word2LaTeX Logo"
+                className="w-8 h-8 rounded-lg shadow-sm border border-slate-200/60 object-contain hover:scale-105 transition-transform duration-200"
+                referrerPolicy="no-referrer"
+              />
+              <span className="font-black text-sm tracking-tight bg-gradient-to-r from-indigo-700 via-blue-700 to-indigo-800 bg-clip-text text-transparent hidden sm:inline-block">
+                Word2LaTeX.io.vn
+              </span>
+            </div>
+
+            {/* Divider dọc */}
+            <span className="text-slate-300 hidden sm:inline">|</span>
+
+            {/* Phần tên tài khoản và hình ảnh */}
+            <div className="flex items-center gap-2.5 select-none">
             <div className="relative w-7 h-7 rounded-full border border-slate-300 overflow-hidden bg-slate-200 shrink-0 flex items-center justify-center">
               <img
                 src={getUserAvatar()}
@@ -3818,6 +3844,7 @@ ${cleanedBody}
                 Get Pro
               </button>
             )}
+          </div>
           </div>
 
           {/* PHẢI: các phần góp ý, thông báo, và nút thoát */}
@@ -4271,7 +4298,12 @@ ${cleanedBody}
                 <div className="flex flex-wrap items-center gap-3 md:gap-4 w-full sm:w-auto">
                   {/* Title */}
                   <span className="font-extrabold text-sm text-slate-800 tracking-tight flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <img
+                      src="/logo.svg"
+                      alt="Logo"
+                      className="w-5 h-5 rounded-md object-contain"
+                      referrerPolicy="no-referrer"
+                    />
                     Latex2Word Converter
                   </span>
 
