@@ -2833,9 +2833,10 @@ ${cleanedBody}
     }
 
     setIsCompilingPdf(true);
-    triggerToast("Đang kết nối tới máy chủ biên dịch LaTeX sang PDF...", true);
+    triggerToast("Đang chuẩn bị biên dịch LaTeX sang PDF...", true);
 
     try {
+      // 1. Thử gọi API local trước (chỉ hoạt động khi có server backend chạy thực tế)
       let response;
       let callApiFailed = false;
       try {
@@ -2864,42 +2865,99 @@ ${cleanedBody}
 
         triggerToast("Đã tải về tài liệu PDF hoàn chỉnh!", true);
         await incrementLatexCount();
-      } else {
-        // Fallback: Tải trực tiếp bằng HTML Form POST lên texlive.net để tránh vấn đề CORS và không cần Server Backend!
-        console.log("Falling back to direct texlive.net form compilation (client-side only).");
-        triggerToast("Đang kết nối trực tiếp đến máy chủ texlive.net để biên dịch...", true);
-        
-        const form = document.createElement("form");
-        form.method = "POST";
-        form.action = "https://texlive.net/cgi-bin/latexcgi";
-        form.target = "_blank"; // Mở tab mới hoặc tải về trực tiếp tùy trình duyệt
-        
-        const formattedLatex = rawText.replace(/\r?\n/g, "\r\n");
-
-        const fields = {
-          "filecontents[]": formattedLatex,
-          "filename[]": "document.tex",
-          "engine": "pdflatex",
-          "return": "pdf"
-        };
-
-        for (const [key, value] of Object.entries(fields)) {
-          const input = document.createElement("input");
-          input.type = "hidden";
-          input.name = key;
-          input.value = value;
-          form.appendChild(input);
-        }
-
-        document.body.appendChild(form);
-        form.submit();
-        document.body.removeChild(form);
-
-        triggerToast("Đã gửi yêu cầu biên dịch thành công! File PDF đang được tải xuống từ texlive.net.", true);
-        await incrementLatexCount();
+        return;
       }
+
+      // 2. Nếu API local không có (như trên GitHub Pages hoàn toàn tĩnh), gọi fetch trực tiếp phía Client tới texlive.net
+      console.log("Local API is not available (common on static GitHub Pages). Trying direct client-side fetch to texlive.net...");
+      triggerToast("Đang biên dịch trực tuyến qua dịch vụ LaTeX...", true);
+      
+      try {
+        const formData = new FormData();
+        const formattedLatex = rawText.replace(/\r?\n/g, "\r\n");
+        formData.append("filecontents[]", formattedLatex);
+        formData.append("filename[]", "document.tex");
+        formData.append("engine", "pdflatex");
+        formData.append("return", "pdf");
+
+        const texliveResponse = await fetch("https://texlive.net/cgi-bin/latexcgi", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (texliveResponse.ok) {
+          const pdfBlob = await texliveResponse.blob();
+          // Kiểm tra xem có đúng định dạng file PDF không
+          if (pdfBlob.type === "application/pdf") {
+            const url = URL.createObjectURL(pdfBlob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "tai_lieu_latex.pdf";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+            triggerToast("Đã tải về tài liệu PDF hoàn chỉnh!", true);
+            await incrementLatexCount();
+            return;
+          }
+        }
+      } catch (corsErr) {
+        console.warn("Direct fetch to texlive.net failed (CORS or server error). Using hidden iframe fallback.");
+      }
+
+      // 3. Fallback tối thượng: Gửi Form ẩn nhắm tới một Iframe ẩn.
+      // Cách này giúp vượt qua giới hạn CORS của trình duyệt, tự động tải xuống file PDF trực tiếp ngay trên trang hiện tại mà không bị nhảy tab/mở tab mới!
+      console.log("Using hidden iframe form submission fallback.");
+      triggerToast("Đang tải xuống tài liệu PDF...", true);
+
+      // Tạo hoặc lấy Iframe ẩn đã có sẵn
+      let iframe = document.getElementById("pdf-compile-iframe") as HTMLIFrameElement | null;
+      if (!iframe) {
+        iframe = document.createElement("iframe");
+        iframe.id = "pdf-compile-iframe";
+        iframe.name = "pdf-compile-iframe";
+        iframe.style.display = "none";
+        document.body.appendChild(iframe);
+      }
+
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = "https://texlive.net/cgi-bin/latexcgi";
+      form.target = "pdf-compile-iframe"; // Gửi dữ liệu vào iframe ẩn này!
+
+      const formattedLatex = rawText.replace(/\r?\n/g, "\r\n");
+      const fields = {
+        "filecontents[]": formattedLatex,
+        "filename[]": "document.tex",
+        "engine": "pdflatex",
+        "return": "pdf"
+      };
+
+      for (const [key, value] of Object.entries(fields)) {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = key;
+        input.value = value;
+        form.appendChild(input);
+      }
+
+      document.body.appendChild(form);
+      form.submit();
+      
+      // Xoá form sau khi gửi
+      setTimeout(() => {
+        if (form.parentNode) {
+          document.body.removeChild(form);
+        }
+      }, 1000);
+
+      triggerToast("Yêu cầu biên dịch thành công! Tài liệu PDF đang tự động tải xuống.", true);
+      await incrementLatexCount();
+
     } catch (err) {
-       console.error("PDF Compilation failed:", err);
+      console.error("PDF Compilation failed:", err);
       triggerToast("Biên dịch PDF gặp sự cố. Vui lòng kiểm tra lại mã nguồn LaTeX hoặc thử lại sau!", false);
     } finally {
       setIsCompilingPdf(false);
