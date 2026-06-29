@@ -2832,56 +2832,116 @@ ${cleanedBody}
       return;
     }
 
-    triggerToast("Đang gửi yêu cầu tạo file PDF...", true);
-    
+    triggerToast("Đang chuẩn bị xuất PDF...", true);
+
     try {
-      // Sử dụng trực tiếp API texlive.net thông qua form POST để hoạt động trên mọi môi trường (kể cả Github web tĩnh)
-      const form = document.createElement("form");
-      form.method = "POST";
-      form.action = "https://texlive.net/cgi-bin/latexcgi";
-      form.target = "_blank"; // Mở trong tab mới để tránh CORS và tải file PDF trực tiếp
+      // === PHƯƠNG PHÁP: Print-to-PDF qua iframe ẩn ===
+      // Hoạt động ổn định trên mọi môi trường (GitHub Pages, tên miền thực)
+      // Không cần mở tab mới, không bị popup blocker chặn, không phụ thuộc dịch vụ ngoài.
 
-      const formattedLatex = rawText.replace(/\r?\n/g, "\r\n");
-      
-      const fileContentsInput = document.createElement("input");
-      fileContentsInput.type = "hidden";
-      fileContentsInput.name = "filecontents[]";
-      fileContentsInput.value = formattedLatex;
-      form.appendChild(fileContentsInput);
+      // Lấy nội dung HTML đã được render (giống hàm downloadAsWord)
+      if (!previewRef.current) {
+        triggerToast("Không tìm thấy nội dung để xuất PDF!", false);
+        return;
+      }
 
-      const filenameInput = document.createElement("input");
-      filenameInput.type = "hidden";
-      filenameInput.name = "filename[]";
-      filenameInput.value = "document.tex";
-      form.appendChild(filenameInput);
+      const clone = previewRef.current.cloneNode(true) as HTMLDivElement;
+      injectMathML(clone);
+      injectInlineStyles(clone);
+      const bodyHtml = clone.innerHTML;
 
-      const engineInput = document.createElement("input");
-      engineInput.type = "hidden";
-      engineInput.name = "engine";
-      engineInput.value = "pdflatex";
-      form.appendChild(engineInput);
+      // Tạo HTML đầy đủ cho trang in PDF
+      const printHtml = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tài liệu LaTeX - PDF</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <style>
+    @page {
+      size: A4;
+      margin: 2cm 2.5cm;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Times New Roman', Times, serif;
+      font-size: 13pt;
+      line-height: 1.5;
+      color: #000;
+      margin: 0;
+      padding: 0;
+      background: white;
+    }
+    p { margin: 0 0 6pt 0; }
+    h1, h2, h3 { page-break-after: avoid; }
+    table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
+    table th, table td { border: 1px solid #888; padding: 4pt 6pt; font-size: 12pt; }
+    table th { font-weight: bold; background: #f5f5f5; }
+    .katex { font-size: 1em; }
+    .katex-display { margin: 8pt 0; text-align: center; overflow-x: auto; }
+    img { max-width: 100%; }
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+${bodyHtml}
+</body>
+</html>`;
 
-      const returnInput = document.createElement("input");
-      returnInput.type = "hidden";
-      returnInput.name = "return";
-      returnInput.value = "pdf";
-      form.appendChild(returnInput);
+      // Tạo iframe ẩn để in
+      const iframe = document.createElement("iframe");
+      iframe.style.position = "fixed";
+      iframe.style.right = "0";
+      iframe.style.bottom = "0";
+      iframe.style.width = "0";
+      iframe.style.height = "0";
+      iframe.style.border = "0";
+      iframe.style.visibility = "hidden";
+      document.body.appendChild(iframe);
 
-      document.body.appendChild(form);
-      form.submit();
-      
-      // Cleanup
-      setTimeout(() => {
-        if (document.body.contains(form)) {
-          document.body.removeChild(form);
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!iframeDoc) {
+        document.body.removeChild(iframe);
+        triggerToast("Trình duyệt không hỗ trợ xuất PDF. Hãy thử cách khác!", false);
+        return;
+      }
+
+      iframeDoc.open();
+      iframeDoc.write(printHtml);
+      iframeDoc.close();
+
+      // Đợi tài nguyên (fonts, katex CSS) được tải xong
+      await new Promise<void>((resolve) => {
+        if (iframe.contentWindow) {
+          iframe.contentWindow.onload = () => resolve();
+          // Fallback timeout nếu onload không fire
+          setTimeout(resolve, 1200);
+        } else {
+          setTimeout(resolve, 1200);
         }
-      }, 1000);
-      
-      triggerToast("Tạo PDF thành công! Đang tải về trong cửa sổ mới.", true);
+      });
+
+      triggerToast("Đang mở hộp thoại in — chọn 'Save as PDF' để lưu file!", true);
+
+      // Gọi print dialog của trình duyệt (Ctrl+P)
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+
+      // Cleanup iframe sau khi in xong
+      setTimeout(() => {
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+        }
+      }, 3000);
+
       await incrementLatexCount();
     } catch (error) {
-      console.error("Lỗi khi tạo PDF:", error);
-      triggerToast("Có lỗi xảy ra khi tạo PDF. Vui lòng thử lại!", false);
+      console.error("Lỗi khi xuất PDF:", error);
+      triggerToast("Có lỗi xảy ra khi xuất PDF. Vui lòng thử lại!", false);
     }
   };
 
