@@ -1411,6 +1411,7 @@ export default function App() {
           output: "html",
           throwOnError: false,
           errorColor: "#f43f5e",
+          strict: "ignore",
         });
 
         const tag = isDisplay ? "div" : "span";
@@ -2540,6 +2541,7 @@ ${cleanedBody}
           output: "html",
           throwOnError: false,
           errorColor: "#f43f5e",
+          strict: "ignore",
         });
 
         const tag = isDisplay ? "div" : "span";
@@ -2834,30 +2836,68 @@ ${cleanedBody}
     triggerToast("Đang kết nối tới máy chủ biên dịch LaTeX sang PDF...", true);
 
     try {
-      const response = await fetch("/api/compile-latex", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ latexCode: rawText }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Server compile error");
+      let response;
+      let callApiFailed = false;
+      try {
+        response = await fetch("/api/compile-latex", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ latexCode: rawText }),
+        });
+      } catch (err) {
+        console.warn("fetch /api/compile-latex failed:", err);
+        callApiFailed = true;
       }
 
-      const pdfBlob = await response.blob();
-      const url = URL.createObjectURL(pdfBlob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "tai_lieu_latex.pdf";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      if (!callApiFailed && response && response.ok) {
+        const pdfBlob = await response.blob();
+        const url = URL.createObjectURL(pdfBlob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "tai_lieu_latex.pdf";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
 
-      triggerToast("Đã tải về tài liệu PDF hoàn chỉnh!", true);
-      await incrementLatexCount();
+        triggerToast("Đã tải về tài liệu PDF hoàn chỉnh!", true);
+        await incrementLatexCount();
+      } else {
+        // Fallback: Tải trực tiếp bằng HTML Form POST lên texlive.net để tránh vấn đề CORS và không cần Server Backend!
+        console.log("Falling back to direct texlive.net form compilation (client-side only).");
+        triggerToast("Đang kết nối trực tiếp đến máy chủ texlive.net để biên dịch...", true);
+        
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = "https://texlive.net/cgi-bin/latexcgi";
+        form.target = "_blank"; // Mở tab mới hoặc tải về trực tiếp tùy trình duyệt
+        
+        const formattedLatex = rawText.replace(/\r?\n/g, "\r\n");
+
+        const fields = {
+          "filecontents[]": formattedLatex,
+          "filename[]": "document.tex",
+          "engine": "pdflatex",
+          "return": "pdf"
+        };
+
+        for (const [key, value] of Object.entries(fields)) {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = key;
+          input.value = value;
+          form.appendChild(input);
+        }
+
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
+
+        triggerToast("Đã gửi yêu cầu biên dịch thành công! File PDF đang được tải xuống từ texlive.net.", true);
+        await incrementLatexCount();
+      }
     } catch (err) {
        console.error("PDF Compilation failed:", err);
       triggerToast("Biên dịch PDF gặp sự cố. Vui lòng kiểm tra lại mã nguồn LaTeX hoặc thử lại sau!", false);
@@ -3199,6 +3239,7 @@ ${cleanedBody}
             displayMode: isDisplay,
             output: "mathml",
             throwOnError: false,
+            strict: "ignore",
           });
           mathmlCache.set(cacheKey, mml);
         } catch (e) {
