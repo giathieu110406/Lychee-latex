@@ -1074,8 +1074,8 @@ export default function App() {
         table.doc-answer-table {
             margin-top: 16pt !important;
             margin-bottom: 12pt !important;
-            border: 1px solid #10b981 !important;
-            background-color: #ecfdf5 !important;
+            border: 1px solid #475569 !important;
+            background-color: transparent !important;
         }
         table {
             border-collapse: collapse;
@@ -1084,12 +1084,12 @@ export default function App() {
             margin-bottom: 12pt !important;
         }
         table th, table td {
-            border: 1px solid #cbd5e1 !important;
+            border: 1px solid #475569 !important;
             padding: 6px !important;
         }
         table th {
             font-weight: bold !important;
-            background-color: #f3f4f6 !important;
+            background-color: transparent !important;
         }
     </style>
     </head>
@@ -1206,8 +1206,8 @@ export default function App() {
         table.doc-answer-table {
             margin-top: 16pt !important;
             margin-bottom: 12pt !important;
-            border: 1px solid #10b981 !important;
-            background-color: #ecfdf5 !important;
+            border: 1px solid #475569 !important;
+            background-color: transparent !important;
         }
         table {
             border-collapse: collapse;
@@ -1216,12 +1216,12 @@ export default function App() {
             margin-bottom: 12pt !important;
         }
         table th, table td {
-                  border: 1px solid #cbd5e1 !important;
+            border: 1px solid #475569 !important;
             padding: 6px !important;
         }
         table th {
             font-weight: bold !important;
-            background-color: #f3f4f6 !important;
+            background-color: transparent !important;
         }
     </style>
     </head>
@@ -3144,10 +3144,10 @@ ${cleanedBody}
       const bodyHtml = bodyEl ? bodyEl.innerHTML : "";
 
       const tableHtml = `
-        <table class="doc-answer-table" border="1" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; border: 1px solid #10b981; margin-top: 14pt; margin-bottom: 14pt; background-color: #ecfdf5; margin-left: 20pt;">
+        <table class="doc-answer-table" border="1" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; border: 1px solid #475569; margin-top: 14pt; margin-bottom: 14pt; background-color: transparent; margin-left: 20pt;">
           <tr>
             <td style="padding: 10pt; border: none; font-family: ${wordFont}; margin: 0;">
-              <span style="font-family: ${wordFont}; font-size: 13pt; font-weight: bold; color: #047857; margin-bottom: 4pt; letter-spacing: 0.05em; text-transform: uppercase; display: block; line-height: 1.15;">
+              <span style="font-family: ${wordFont}; font-size: 13pt; font-weight: bold; color: #1e293b; margin-bottom: 4pt; letter-spacing: 0.05em; text-transform: uppercase; display: block; line-height: 1.15;">
                 ${titleText}
               </span>
               <div style="font-family: ${wordFont}; font-size: 13pt; color: #374151; margin: 0; line-height: 1.15;">
