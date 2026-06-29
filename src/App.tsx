@@ -2920,32 +2920,52 @@ ${cleanedBody}
         // Tạo clone từ previewRef.current y hệt như tải Word
         const clone = previewRef.current.cloneNode(true) as HTMLDivElement;
         
-        // Chèn styles và MathML y như tải Word để PDF không bị lỗi font hay công thức toán
-        injectMathML(clone);
-        injectInlineStyles(clone);
+        // Remove 'hidden' class if it exists (Tailwind's hidden could interfere with rendering)
+        clone.classList.remove("hidden");
+        clone.classList.add("block");
         
-        // Đặt styles hiển thị để html2canvas có thể chụp lại mà không ảnh hưởng giao diện hiện tại
+        // KHÔNG dùng injectMathML cho PDF vì html2canvas không hỗ trợ tốt thẻ <math> của MathML
+        // KHÔNG dùng injectInlineStyles vì PDF cần giữ nguyên giao diện web (Tailwind CSS)
+        
+        // Tạo một wrapper để ẩn element khỏi người dùng nhưng html2canvas vẫn đọc được
+        const wrapper = document.createElement("div");
+        wrapper.style.position = "absolute";
+        wrapper.style.top = "0";
+        wrapper.style.left = "0";
+        wrapper.style.width = "800px";
+        wrapper.style.zIndex = "-9999"; // Ẩn phía sau
+        wrapper.style.backgroundColor = "white"; // Đảm bảo nền trắng
+        
+        // Đặt styles hiển thị cho clone
         clone.style.display = "block";
-        clone.style.position = "absolute";
-        clone.style.left = "-9999px";
-        clone.style.top = "0";
-        clone.style.width = "800px";
+        clone.style.width = "100%";
+        clone.style.height = "max-content"; // Đảm bảo chiều cao đủ chứa toàn bộ nội dung
+        clone.style.overflow = "visible"; // Không bị cắt nội dung (tránh bị scroll)
+        clone.classList.remove("overflow-auto", "flex-1"); // Xoá các class giới hạn chiều cao
         clone.style.backgroundColor = "white";
         clone.style.color = "black";
         clone.style.padding = "20px 40px"; // Lề trang PDF
         
-        document.body.appendChild(clone);
+        wrapper.appendChild(clone);
+        document.body.appendChild(wrapper);
         
         const opt: any = {
           margin:       10,
           filename:     'tai_lieu_latex.pdf',
-          image:        { type: 'jpeg', quality: 0.98 },
-          html2canvas:  { scale: 2, useCORS: true, letterRendering: true, windowWidth: 800 },
+          image:        { type: 'jpeg', quality: 1 },
+          html2canvas:  { 
+            scale: 2, 
+            useCORS: true, 
+            letterRendering: true, 
+            windowWidth: 800,
+            scrollY: 0,
+            scrollX: 0
+          },
           jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
         };
         
         await html2pdf().set(opt).from(clone).save();
-        document.body.removeChild(clone);
+        document.body.removeChild(wrapper);
         
         triggerToast("Đã tạo và tải xuống PDF nội bộ thành công!", true);
         await incrementLatexCount();
