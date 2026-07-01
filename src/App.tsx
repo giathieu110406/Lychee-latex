@@ -1029,6 +1029,29 @@ export default function App() {
   };
 
   const processMultipleQuestionsText = (text: string) => {
+    if (!text) return;
+
+    // 1. Chuẩn hoá văn bản đầu vào chuẩn Unicode & Dấu câu giống hệt LaTeX Converter
+    let normalizedInput = text
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/^\uFEFF/, "")
+      .normalize("NFC")
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/\u2013/g, "--")
+      .replace(/\u2014/g, "---")
+      .replace(/\u2026/g, "...")
+      .replace(/\u00A0/g, " ")
+      .replace(/\u200B/g, "")
+      .replace(/\u200C/g, "");
+
+    // 2. Tự động chuyển đổi tab thành bảng Markdown
+    let convertedText = convertTabTableToMarkdown(normalizedInput);
+
+    // 3. Áp dụng thuật toán Định dạng thông minh chuẩn (bao gồm xử lý dính chữ, dính số, dính ngoặc...) của LaTeX Converter
+    let formattedText = applySmartFormatting(convertedText);
+
     // Fix logic bugs in markdown
     const fixMarkdown = (t: string) => {
       let result = t.replace(/(^|\s)\*\s+\*(.*?)\*\*/g, '$1**$2**');
@@ -1039,7 +1062,7 @@ export default function App() {
       return result;
     };
 
-    const fixedText = fixMarkdown(text);
+    const fixedText = fixMarkdown(formattedText);
     const lines = fixedText.split('\n');
     
     let blocks: {text: string, typeContext: "trac_nghiem" | "trac_nghiem_dung_sai" | "trac_nghiem_tra_loi_ngan" | "tu_luan"}[] = [];
@@ -1051,7 +1074,11 @@ export default function App() {
         const lineTrimmed = line.trim();
         const lowerLine = lineTrimmed.toLowerCase();
         
-        const isNewQuestion = /^(?:Câu|Bài)\s*(?:hỏi)?\s*(?:\d+)?\s*(?:[:.\-|\*]|$)/i.test(lineTrimmed);
+        // Nhận diện câu hỏi an toàn: Tránh các dòng trống, lệnh LaTeX (\begin, \section), hoặc dòng bảng biểu (|)
+        const isTableLine = lineTrimmed.startsWith("|");
+        const isLaTeXCommand = lineTrimmed.startsWith("\\");
+        
+        const isNewQuestion = !isTableLine && !isLaTeXCommand && /^(?:[\-\*•\+]\s*)?(?:\*\s*\*|\*\*|\*)?\s*(?:Câu|Bài)\s*(?:hỏi)?\s*(?:\d+)?\s*(?:[:.\-|\*]|$)/i.test(lineTrimmed);
         const isNewSection = /^Phần\s+\d+/i.test(lineTrimmed);
 
         if (isNewQuestion || isNewSection) {
@@ -1078,7 +1105,7 @@ export default function App() {
     }
     if (currentBlock.trim()) blocks.push({ text: currentBlock, typeContext: currentTypeContext });
     
-    blocks = blocks.filter(b => /^(?:Câu|Bài)/i.test(b.text.trim()));
+    blocks = blocks.filter(b => /^(?:[\-\*•\+]\s*)?(?:\*\s*\*|\*\*|\*)?\s*(?:Câu|Bài)/i.test(b.text.trim()));
     
     if (blocks.length === 0) {
         blocks.push({ text: fixedText, typeContext: currentTypeContext });
@@ -1128,9 +1155,9 @@ export default function App() {
               updated.push({
                   id: "q_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
                   type: item.type,
-                  questionText: item.q,
+                  questionText: getCleanQuestionBody(item.q),
                   columns: item.type === "trac_nghiem" ? newTracNghiemColumns : undefined,
-                  answerText: item.a,
+                  answerText: getCleanAnswerBody(item.a),
               });
           });
           
@@ -1393,7 +1420,43 @@ export default function App() {
 
   const getCleanQuestionBody = (text: string): string => {
     if (!text) return "";
-    return text.replace(/^\s*(?:Câu|Bài)\s*(?:hỏi)?\s*(?:\d+)?\s*[:.\-|\*]*/i, "").trim();
+    let cleaned = text.trim();
+    
+    let prev;
+    do {
+      prev = cleaned;
+      // Strip leading bullets/symbols/spaces
+      cleaned = cleaned.replace(/^\s*[\-\*•\+\s]+\s*/, "").trim();
+      // Strip Câu/Bài/Câu hỏi optionally followed by digits/letters/parentheses/dots/colons/stars
+      cleaned = cleaned.replace(/^\s*(?:\*\s*\*|\*\*|\*)?\s*(?:Câu|Bài)\s*(?:hỏi)?\s*(?:\d+|[A-Z])?\s*(?:\([^)]+\))?\s*[:.\-|\*]*\s*(?:\*\*)?\s*/i, "").trim();
+      // Strip any punctuation/bullets at the start again
+      cleaned = cleaned.replace(/^\s*[:.\-|\*\s]+\s*/, "").trim();
+    } while (cleaned !== prev);
+
+    return cleaned;
+  };
+
+  const getCleanAnswerBody = (text: string): string => {
+    if (!text) return "";
+    let cleaned = text.trim();
+    
+    let prev;
+    do {
+      prev = cleaned;
+      // Strip leading bullets/stars/spaces
+      cleaned = cleaned.replace(/^\s*[\-\*•\+\s]+\s*/, "").trim();
+      
+      // Strip complex headers: Đáp án/Lời giải/Hướng dẫn giải/Giải thích/Lời giải chi tiết with optional '& Lời giải/Đáp án' and 'Câu 1:'
+      cleaned = cleaned.replace(/^\s*(?:\*\s*\*|\*\*|\*)?\s*(?:Đáp án|Lời giải|Hướng dẫn giải|Giải thích|Lời giải chi tiết)\s*(?:&\s*(?:Lời giải|Đáp án|Hướng dẫn giải))?\s*(?:Câu|Bài)?\s*(?:\d+)?\s*[:.\-|\*]*\s*(?:\*\*)?\s*/i, "").trim();
+      
+      // Strip "Đáp án đúng/Phương án đúng/Đáp án" with optional stars/colons
+      cleaned = cleaned.replace(/^\s*(?:\*\s*\*|\*\*|\*)?\s*(?:Đáp án đúng|Phương án đúng|Đáp án|Lời giải)\s*[:.\-|\*]*\s*(?:\*\*)?\s*/i, "").trim();
+
+      // Strip any leading punctuation/symbols left
+      cleaned = cleaned.replace(/^\s*[:.\-|\*\s]+\s*/, "").trim();
+    } while (cleaned !== prev);
+
+    return cleaned;
   };
 
   const renumberQuestions = (questions: any[]) => {
@@ -2876,6 +2939,7 @@ ${cleanedBody}
   const handlePasteGeneric = (
     e: React.ClipboardEvent<HTMLTextAreaElement>,
     setter: (val: string) => void,
+    bypassAutoProcess?: boolean,
   ) => {
     const htmlData = e.clipboardData.getData("text/html");
     let markdown = "";
@@ -2937,8 +3001,8 @@ ${cleanedBody}
       }
     }
     
-    // Nếu có từ 2 câu trở lên, chạy tính năng "Dán thông minh" ẩn danh
-    if (cauCount >= 2) {
+    // Nếu có từ 2 câu trở lên, chạy tính năng "Dán thông minh" ẩn danh (nếu không bypass)
+    if (!bypassAutoProcess && cauCount >= 2) {
       const currentPromptCount = userDoc?.promptCount || 0;
       if (!isApproved && currentPromptCount >= 8) {
         triggerToast(
@@ -6272,6 +6336,7 @@ ${bodyHtml}
                   <textarea
                     value={smartPasteText}
                     onChange={(e) => setSmartPasteText(e.target.value)}
+                    onPaste={(e) => handlePasteGeneric(e, setSmartPasteText, true)}
                     placeholder="Dán (Ctrl+V) toàn bộ nội dung câu hỏi và đáp án từ ChatGPT/Gemini vào đây..."
                     className="w-full h-64 p-4 text-sm rounded-xl border border-slate-200 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-slate-50"
                   />
