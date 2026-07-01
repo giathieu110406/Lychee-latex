@@ -417,6 +417,80 @@ app.post("/api/parse-exam", async (req, res) => {
   }
 });
 
+// 3.5. API: Fix logical & presentational formatting errors using Gemini API ("AI brain")
+app.post("/api/fix-logic", async (req, res) => {
+  try {
+    const { text } = req.body;
+    
+    if (!text) {
+      return res.status(400).json({ error: "Thiếu dữ liệu text" });
+    }
+
+    console.log("[Gemini API] Đang gửi yêu cầu Sửa lỗi Logic bằng AI...");
+
+    // Call Gemini API using retry logic to fix the text with strict presentation guidelines
+    const response = await generateContentWithRetry({
+      model: "gemini-3.5-flash", // Use standard highly-available model by default
+      contents: `Hãy tối ưu hóa hiển thị và sửa toàn bộ các lỗi trình bày, lỗi logic định dạng cho văn bản tiếng Việt sau đây:\n\n${text}`,
+      config: {
+        systemInstruction: `Bạn là chuyên gia định dạng tài liệu học thuật (Markdown, LaTeX và bảng biểu).
+Nhiệm vụ của bạn là phục hồi và chuẩn hóa văn bản tiếng Việt bị lỗi định dạng (do copy từ PDF/Word) về dạng Markdown chuẩn xác theo mẫu sau.
+
+HÃY ÁP DỤNG NGHIÊM NGẶT CÁC QUY TẮC SAU:
+
+1. ĐỊNH DẠNG TIÊU ĐỀ (HEADING) VÀ DANH SÁCH:
+   - Sử dụng heading Markdown chuẩn (#, ##, ###) cho các tiêu đề (ví dụ: "# MẪU VĂN BẢN TOÁN HỌC", "## 1. Công thức Toán học").
+   - Các mục liệt kê dùng dấu gạch ngang "- " hoặc đánh số. Phải có khoảng trắng sau dấu gạch ngang.
+
+2. BẢNG BIỂU (RẤT QUAN TRỌNG):
+   - Nhận diện các số liệu nằm liền nhau và chuyển đổi CHÍNH XÁC sang dạng bảng Markdown có đầy đủ hàng rào '|' và dòng kẻ phân cách cột '| --- | --- |'.
+   - KHÔNG bao giờ để bảng biểu bị vỡ thành các dòng text độc lập.
+
+3. CÔNG THỨC TOÁN HỌC (LATEX):
+   - Công thức nội dòng (inline) đặt trong dấu $...$ (ví dụ: $a^2 + b^2 = c^2$). 
+   - Công thức khối (display) phải đặt trên dòng riêng biệt và bọc bởi $$...$$ TRÊN CÙNG MỘT DÒNG hoặc tách dòng chuẩn (ví dụ: $$\\int_{a}^{b} f(x) dx = F(b) - F(a)$$).
+   - Sửa các ký hiệu unicode (như ², ³, α, β) thành mã LaTeX tương ứng ($^2$, $^3$, $\\alpha$, $\\beta$).
+   - Đảm bảo các phân số, căn bậc hai, giới hạn, tích phân... viết bằng mã LaTeX chuẩn (ví dụ: \\frac{a}{b}, \\sqrt{x}, \\lim, \\int).
+
+4. TRÌNH BÀY IN ĐẬM VÀ CẤU TRÚC CÂU HỎI:
+   - Các từ khóa như "Câu 1:", "Thời gian làm bài:", "Đáp án & Lời giải", "Đáp án đúng:", "Lời giải chi tiết:" PHẢI được in đậm bằng \`**...**\`.
+   - TUYỆT ĐỐI không để khoảng trắng sát bên trong dấu in đậm (Đúng: \`**Câu 1:**\`, Sai: \`** Câu 1: **\`).
+   - Sửa lỗi dấu hoa thị bị tách rời cho in đậm (ví dụ: \`* *Đáp án đúng:**\` thành \`* **Đáp án đúng:**\` nếu có dấu đầu dòng bullet point ở trước, hoặc thành \`**Đáp án đúng:**\` nếu không có dấu đầu dòng). Tuyệt đối KHÔNG được xóa hoặc triệt tiêu dấu đầu dòng bullet point (\`* \` hoặc \`- \`) ở đầu dòng.
+
+5. ĐOẠN VĂN VÀ BẢO TOÀN NỘI DUNG:
+   - Dùng khối trích dẫn \`> \` cho các dòng ghi chú quan trọng.
+   - Xóa các khoảng trắng, dấu xuống dòng vô lý, đứt đoạn giữa chừng do lỗi copy-paste.
+   - TUYỆT ĐỐI KHÔNG tự ý thay đổi, tóm tắt, giải mã hay lược bớt bất kỳ nội dung văn bản, số liệu nào. CHỈ CHỈNH SỬA ĐỊNH DẠNG.
+
+6. ĐẦU RA:
+   - TRẢ VỀ TRỰC TIẾP VĂN BẢN ĐÃ SỬA. KHÔNG giải thích, KHÔNG bọc trong khối \`\`\`markdown ... \`\`\`.`,
+      }
+    });
+
+    let fixedText = response.text || "";
+    fixedText = fixedText.trim();
+    
+    // Clean any outer markdown code block wrapper if the model still returns it
+    if (fixedText.startsWith("```markdown")) {
+      fixedText = fixedText.slice(11);
+      if (fixedText.endsWith("```")) {
+        fixedText = fixedText.slice(0, -3);
+      }
+    } else if (fixedText.startsWith("```")) {
+      fixedText = fixedText.slice(3);
+      if (fixedText.endsWith("```")) {
+        fixedText = fixedText.slice(0, -3);
+      }
+    }
+    fixedText = fixedText.trim();
+
+    return res.json({ success: true, fixedText });
+  } catch (error: any) {
+    console.error("Lỗi khi sửa logic bằng Gemini:", error);
+    return res.status(500).json({ error: error.message || "Lỗi máy chủ khi sửa logic văn bản" });
+  }
+});
+
 // 4. API: Compile LaTeX to PDF via standard fast LaTeX compiler
 app.post("/api/compile-latex", async (req, res) => {
   try {

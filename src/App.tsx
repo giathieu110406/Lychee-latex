@@ -134,7 +134,7 @@ function protectUrls(text: string): {
   if (!text) return { protectedText: "", urls: [] };
 
   const urls: ProtectedUrl[] = [];
-  const URL_RE = /https?:\/\/[^\s<>\"]+[^.,;:!?\s<>\")]/gi;
+  const URL_RE = /https?:\/\/[^\s<>\"{}]+[^.,;:!?\s<>\"){}]/gi;
 
   let match;
   let lastIndex = 0;
@@ -267,6 +267,14 @@ function applySmartFormatting(text: string): string {
   );
   formatted = formatted.replace(mathEndLetterPattern, "$1 $2");
 
+  // 11. Sửa lỗi in đậm thiếu dấu sao ở đầu: *chữ** -> **chữ** (tránh nuốt bullet point đứng trước)
+  formatted = formatted.replace(/(?<!\*)\*(?!\*)([^\*\s\n][^\*\n]*?)\*\*/g, '**$1**');
+  
+  // 12. Sửa lỗi in đậm thiếu dấu sao ở cuối: **chữ* -> **chữ**
+  formatted = formatted.replace(/\*\*([^\*\n]*?[^\*\s\n])(?<!\*)\*(?!\*)/g, '**$1**');
+  // 13. Sửa khoảng trắng thừa sát dấu in đậm: ** chữ ** -> **chữ**
+  formatted = formatted.replace(/\*\*\s+(.*?)\s+\*\*/g, '**$1**');
+
   // Restore original URLs as is (forceOriginal = true)
   return restoreUrls(formatted, urls, true);
 }
@@ -286,11 +294,17 @@ function isRealMathLaTeX(str: string): boolean {
   // Khử các ký hiệu escape phổ biến trước khi kiểm tra (ví dụ: \% thành %, \$ thành $)
   const cleaned = content.replace(/\\%/g, "%").replace(/\\([$#&_])/g, "$1");
 
-  // 2. Nếu chỉ chứa chữ số, phân tách bằng . , và các đơn vị đo/tiền vị thương mại thông dụng:
-  // %, đ, VND, VNĐ, USD, EUR, k, tr, m, cm, mm, kg, g, h, s, px, %, v.v.
-  const simpleNumberRegex =
-    /^\d+(?:[.,]\d+)*(?:\s*(?:%|đ|VND|VNĐ|USD|EUR|k|tr|m|cm|mm|kg|g|h|s|px))?$/i;
-  if (simpleNumberRegex.test(cleaned)) {
+  // 2. Chỉ từ chối số kèm đơn vị đo lường/tiền tệ (ví dụ: 50%, 10kg, 5m/s)
+  const numberPlusUnitRegex =
+    /^\d+(?:[.,]\d+)*\s*(?:%|đ|VND|VNĐ|USD|EUR|k|tr|m|cm|mm|kg|g|h|s|px)$/i;
+  if (numberPlusUnitRegex.test(cleaned)) {
+    return false;
+  }
+
+  // 3. Từ chối số thập phân (vì thường là văn bản thường, vd: 1.5, 2,5)
+  // Số nguyên thuần (0, 1, 2) vẫn sẽ được parse KaTeX bình thường
+  const decimalNumberRegex = /^\d+[.,]\d+$/;
+  if (decimalNumberRegex.test(cleaned)) {
     return false;
   }
 
@@ -352,6 +366,9 @@ function normalizeLaTeX(latex: string, isInline: boolean = false): string {
   cleaned = cleaned.replace(/⟹|==>/g, "\\implies");
   cleaned = cleaned.replace(/\\rightarrow/g, "\\to");
   cleaned = cleaned.replace(/→|->/g, "\\to");
+
+  // 4. Fix accidental Markdown links inside \href, e.g., \href{[url](url)}{text} -> \href{url}{text}
+  cleaned = cleaned.replace(/\\href\{\[(.*?)\]\((.*?)\)\}/g, "\\href{$2}");
 
   return cleaned;
 }
@@ -647,6 +664,7 @@ export default function App() {
   ).length;
 
   const [inputText, setInputText] = useState<string>("");
+  const [isFixingLogic, setIsFixingLogic] = useState<boolean>(false);
   const [smartNewline, setSmartNewline] = useState<boolean>(true);
   const [wordFont, setWordFont] = useState<string>(
     "'Times New Roman', Times, serif",
@@ -1421,10 +1439,6 @@ export default function App() {
     const { protectedText, urls } = protectUrls(convertedText);
     let input = protectedText;
 
-    if (smartNewline) {
-      input = applySmartFormatting(input);
-    }
-
     const codeRanges: [number, number][] = [];
     const CODE_BLOCK_REGEX = /```[\s\S]*?```|`[^`\n]+`/g;
     let codeMatch;
@@ -1434,7 +1448,7 @@ export default function App() {
     }
 
     const DISPLAY_MATH_REGEX =
-      "\\$\\$([\\s\\S]*?)\\$\\$|\\\\\\[([\\s\\S]*?)\\\\\\]|\\\\begin\\{(equation|align|gather|multline|eqnarray|alignat|flalign|split)(\\*?)\\}([\\s\\S]*?)\\\\end\\{\\3\\4\\}";
+       "\\$\\$([\\s\\S]*?)\\$\\$|\\\\\\[([\\s\\S]*?)\\\\\\]|\\\\begin\\{(equation|align|gather|multline|eqnarray|alignat|flalign|split|cases|aligned|alignedat|pmatrix|bmatrix|vmatrix|Bmatrix|Vmatrix|matrix|array)(\\*?)\\}([\\s\\S]*?)\\\\end\\{(?:equation|align|gather|multline|eqnarray|alignat|flalign|split|cases|aligned|alignedat|pmatrix|bmatrix|vmatrix|Bmatrix|Vmatrix|matrix|array)\\*?\\}";
     const INLINE_MATH_REGEX =
       "(?<!\\$)\\$(?!\\$)((?:[^$\\n\\\\]|\\\\[\\s\\S])*?)(?<!\\$)\\$(?!\\$)";
     const INLINE_PAREN_REGEX = "\\\\\\([\\s\\S]*?\\\\\\)";
@@ -1456,6 +1470,12 @@ export default function App() {
       );
 
       if (isInsideCode) {
+        if (m.index > lastIdx) {
+          mdText += input.slice(lastIdx, m.index + m[0].length);
+        } else if (m.index === lastIdx) {
+          mdText += m[0];
+        }
+        lastIdx = m.index + m[0].length;
         continue;
       }
 
@@ -1480,43 +1500,49 @@ export default function App() {
       // Nếu không phải là block math và là inline math bọc bởi dấu '$' đơn
       // đồng thời nội dung bên trong KHÔNG PHẢI là một công thức toán thực sự (ví dụ: chỉ là số 10, 20%, ngày tháng, bài toán...)
       if (!isDisplay && raw.startsWith("$") && !isRealMathLaTeX(latex)) {
-        // Trả về văn bản thường đã được làm sạch (ví dụ: "10%" hoặc "bài toán")
-        const plainText = latex
-          .trim()
-          .replace(/\\%/g, "%")
-          .replace(/\\([$#&_])/g, "$1");
-        mdText += plainText;
-        lastIdx = m.index + raw.length;
+        mdText += "$";
+        MATH_COMBINED_RE.lastIndex = m.index + 1;
+        lastIdx = m.index + 1;
         continue;
       }
 
       let mathHtml = "";
       try {
-        const normalized = normalizeLaTeX
+        let normalized = normalizeLaTeX
           ? normalizeLaTeX(latex.trim(), !isDisplay)
           : latex.trim();
+        normalized = restoreUrls(normalized, urls, true);
         const rendered = katex.renderToString(normalized, {
           displayMode: isDisplay,
           output: "html",
           throwOnError: false,
           errorColor: "#f43f5e",
           strict: "ignore",
+          trust: true,
         });
 
-        const tag = isDisplay ? "div" : "span";
-        mathHtml = `<${tag} class="katex-custom-wrapper" data-latex="${escHtml(normalized)}" data-display="${isDisplay}" style="${isDisplay ? "text-align: center; margin: 0.8em 0;" : ""}">${rendered}</${tag}>`;
+        const tag = "span";
+        mathHtml = `<${tag} class="katex-custom-wrapper" data-latex="${escHtml(normalized)}" data-display="${isDisplay}" style="${isDisplay ? "display: block; text-align: center; margin: 0.8em 0;" : ""}">${rendered}</${tag}>`;
       } catch (e: any) {
         mathHtml = `<span style="color:#f43f5e">${escHtml(raw)}</span>`;
       }
 
       const blockIdx = mathBlocks.length;
       mathBlocks.push(mathHtml);
-      mdText += `@@@MATH_BLOCK_${blockIdx}@@@`;
+        if (isDisplay) {
+        mdText += `\n\n@@@MATH_BLOCK_${blockIdx}@@@\n\n`;
+      } else {
+        mdText += `@@@MATH_BLOCK_${blockIdx}@@@`;
+      }
       lastIdx = m.index + raw.length;
     }
 
     if (lastIdx < input.length) {
       mdText += input.slice(lastIdx);
+    }
+
+    if (smartNewline) {
+      mdText = applySmartFormatting(mdText);
     }
 
     // Standard Vietnamese cleanup space rules
@@ -1550,30 +1576,31 @@ export default function App() {
       },
     );
 
-    // Replace equations back
+  // Khôi phục công thức khối và loại bỏ thẻ <p> bao ngoài nếu đứng riêng lẻ
     htmlContent = htmlContent.replace(
-      /@@@MATH_BLOCK_(\d+)@@@(?:[\s\u00a0\u200b]|&nbsp;)*([.,;:!?]|$)/g,
-      (match, id, punc) => {
-        return mathBlocks[+id] + punc;
-      },
-    );
-
-    htmlContent = htmlContent.replace(
-      /@@@MATH_BLOCK_(\d+)@@@(?:[\s\u00a0\u200b]|&nbsp;)*([^.,;:!?\s])/g,
-      (match, id, nextChar) => {
-        const block = mathBlocks[+id];
+      /<p>(?:\s|<br\s*\/?>)*@@@MATH_BLOCK_(\d+)@@@(?:\s|<br\s*\/?>)*<\/p>/g,
+      (match, idStr) => {
+        const block = mathBlocks[+idStr] || "";
         const isDisplay = block.includes('data-display="true"');
-        if (isDisplay) {
-          return block + nextChar;
-        }
-        return block + " " + nextChar;
-      },
+        return isDisplay ? block : match;
+      }
     );
 
+    // Replace equations back an toàn không tiêu thụ ký tự kế tiếp
     htmlContent = htmlContent.replace(
       /@@@MATH_BLOCK_(\d+)@@@/g,
-      (match, id) => {
-        return mathBlocks[+id];
+      (match, idStr, offset, fullStr) => {
+        const block = mathBlocks[+idStr] || "";
+        if (!block) return "";
+        const isDisplay = block.includes('data-display="true"');
+        if (isDisplay) return block;
+        // Thêm khoảng cách nếu inline math liền kề với từ thông thường phía sau
+        const nextSlice = fullStr.slice(offset + match.length);
+        const nextWordMatch = nextSlice.match(/^(?:[\s\u00a0\u200b]|&nbsp;)*([^.,;:!?\)\}\]”’"`\s<@])/);
+        if (nextWordMatch && !nextSlice.startsWith(" ")) {
+          return block + " ";
+        }
+        return block;
       },
     );
 
@@ -2560,10 +2587,6 @@ ${cleanedBody}
       return;
     }
 
-    if (smartNewline) {
-      input = applySmartFormatting(input);
-    }
-
     // Bước 2: Loại bỏ LaTeX trong code blocks
     const codeRanges: [number, number][] = [];
     const CODE_BLOCK_REGEX = /```[\s\S]*?```|`[^`\n]+`/g;
@@ -2576,7 +2599,7 @@ ${cleanedBody}
 
     // Bước 3: Thuật toán nhận diện LaTeX tiên tiến (hỗ trợ nested environments và tránh greedy fail)
     const DISPLAY_MATH_REGEX =
-      "\\$\\$([\\s\\S]*?)\\$\\$|\\\\\\[([\\s\\S]*?)\\\\\\]|\\\\begin\\{(equation|align|gather|multline|eqnarray|alignat|flalign|split)(\\*?)\\}([\\s\\S]*?)\\\\end\\{\\3\\4\\}";
+       "\\$\\$([\\s\\S]*?)\\$\\$|\\\\\\[([\\s\\S]*?)\\\\\\]|\\\\begin\\{(equation|align|gather|multline|eqnarray|alignat|flalign|split|cases|aligned|alignedat|pmatrix|bmatrix|vmatrix|Bmatrix|Vmatrix|matrix|array)(\\*?)\\}([\\s\\S]*?)\\\\end\\{(?:equation|align|gather|multline|eqnarray|alignat|flalign|split|cases|aligned|alignedat|pmatrix|bmatrix|vmatrix|Bmatrix|Vmatrix|matrix|array)\\*?\\}";
     const INLINE_MATH_REGEX =
       "(?<!\\$)\\$(?!\\$)((?:[^$\\n\\\\]|\\\\[\\s\\S])*?)(?<!\\$)\\$(?!\\$)";
     const INLINE_PAREN_REGEX = "\\\\\\([\\s\\S]*?\\\\\\)";
@@ -2598,6 +2621,12 @@ ${cleanedBody}
       );
 
       if (isInsideCode) {
+        if (m.index > lastIdx) {
+          mdText += input.slice(lastIdx, m.index + m[0].length);
+        } else if (m.index === lastIdx) {
+          mdText += m[0];
+        }
+        lastIdx = m.index + m[0].length;
         continue;
       }
 
@@ -2622,41 +2651,47 @@ ${cleanedBody}
       // Nếu không phải là block math và là inline math bọc bởi dấu '$' đơn
       // đồng thời nội dung bên trong KHÔNG PHẢI là một công thức toán thực sự (ví dụ: chỉ là số 10, 20%, ngày tháng, bài toán...)
       if (!isDisplay && raw.startsWith("$") && !isRealMathLaTeX(latex)) {
-        // Trả về văn bản thường đã được làm sạch (ví dụ: "10%" hoặc "bài toán")
-        const plainText = latex
-          .trim()
-          .replace(/\\%/g, "%")
-          .replace(/\\([$#&_])/g, "$1");
-        mdText += plainText;
-        lastIdx = m.index + raw.length;
+        mdText += "$";
+        MATH_COMBINED_RE.lastIndex = m.index + 1;
+        lastIdx = m.index + 1;
         continue;
       }
 
       let mathHtml = "";
       try {
-        const normalized = normalizeLaTeX(latex.trim(), !isDisplay);
+        let normalized = normalizeLaTeX(latex.trim(), !isDisplay);
+        normalized = restoreUrls(normalized, urls, true);
         const rendered = katex.renderToString(normalized, {
           displayMode: isDisplay,
           output: "html",
           throwOnError: false,
           errorColor: "#f43f5e",
           strict: "ignore",
+          trust: true,
         });
 
-        const tag = isDisplay ? "div" : "span";
-        mathHtml = `<${tag} class="katex-custom-wrapper" data-latex="${escHtml(normalized)}" data-display="${isDisplay}" style="${isDisplay ? "text-align: center; margin: 0.8em 0;" : ""}">${rendered}</${tag}>`;
+        const tag = "span";
+        mathHtml = `<${tag} class="katex-custom-wrapper" data-latex="${escHtml(normalized)}" data-display="${isDisplay}" style="${isDisplay ? "display: block; text-align: center; margin: 0.8em 0;" : ""}">${rendered}</${tag}>`;
       } catch (e: any) {
         mathHtml = `<span style="color:#f43f5e" title="${escHtml(e.message || "Error")}">${escHtml(raw)}</span>`;
       }
 
       const blockIdx = mathBlocks.length;
       mathBlocks.push(mathHtml);
-      mdText += `@@@MATH_BLOCK_${blockIdx}@@@`;
+        if (isDisplay) {
+        mdText += `\n\n@@@MATH_BLOCK_${blockIdx}@@@\n\n`;
+      } else {
+        mdText += `@@@MATH_BLOCK_${blockIdx}@@@`;
+      }
       lastIdx = m.index + raw.length;
     }
 
     if (lastIdx < input.length) {
       mdText += input.slice(lastIdx);
+    }
+
+    if (smartNewline) {
+      mdText = applySmartFormatting(mdText);
     }
 
     // Standard Vietnamese cleanup space rules
@@ -2690,33 +2725,30 @@ ${cleanedBody}
       },
     );
 
-    // Replace equations back with smart spaces
-    // 1. Prior to punctuation: no wrapping spaces
+  // Khôi phục công thức khối và loại bỏ thẻ <p> bao ngoài nếu đứng riêng lẻ
     htmlContent = htmlContent.replace(
-      /@@@MATH_BLOCK_(\d+)@@@(?:[\s\u00a0\u200b]|&nbsp;)*([.,;:!?]|$)/g,
-      (match, id, punc) => {
-        return mathBlocks[+id] + punc;
-      },
-    );
-
-    // 2. Prior to ordinary words and other characters: enforce space behind equations
-    htmlContent = htmlContent.replace(
-      /@@@MATH_BLOCK_(\d+)@@@(?:[\s\u00a0\u200b]|&nbsp;)*([^.,;:!?\s])/g,
-      (match, id, nextChar) => {
-        const block = mathBlocks[+id];
+      /<p>(?:\s|<br\s*\/?>)*@@@MATH_BLOCK_(\d+)@@@(?:\s|<br\s*\/?>)*<\/p>/g,
+      (match, idStr) => {
+        const block = mathBlocks[+idStr] || "";
         const isDisplay = block.includes('data-display="true"');
-        if (isDisplay) {
-          return block + nextChar;
-        }
-        return block + " " + nextChar;
-      },
+        return isDisplay ? block : match;
+      }
     );
 
-    // 3. Fallback standard equations
+    // Replace equations back an toàn không tiêu thụ ký tự kế tiếp
     htmlContent = htmlContent.replace(
       /@@@MATH_BLOCK_(\d+)@@@/g,
-      (match, id) => {
-        return mathBlocks[+id];
+      (match, idStr, offset, fullStr) => {
+        const block = mathBlocks[+idStr] || "";
+        if (!block) return "";
+        const isDisplay = block.includes('data-display="true"');
+        if (isDisplay) return block;
+        const nextSlice = fullStr.slice(offset + match.length);
+        const nextWordMatch = nextSlice.match(/^(?:[\s\u00a0\u200b]|&nbsp;)*([^.,;:!?\)\}\]”’"`\s<@])/);
+        if (nextWordMatch && !nextSlice.startsWith(" ")) {
+          return block + " ";
+        }
+        return block;
       },
     );
 
@@ -3456,6 +3488,7 @@ ${bodyHtml}
             output: "mathml",
             throwOnError: false,
             strict: "ignore",
+            trust: true,
           });
           mathmlCache.set(cacheKey, mml);
         } catch (e) {
@@ -3480,6 +3513,18 @@ ${bodyHtml}
           } else if (/^[+\u2212\u00b1\u2213\u22c5\u00d7\u00f7]/.test(op)) {
             mo.setAttribute("lspace", "0.222em");
             mo.setAttribute("rspace", "0.222em");
+          }
+        });
+
+        mathEl.querySelectorAll("[href]").forEach((node) => {
+          const href = node.getAttribute("href");
+          node.removeAttribute("href");
+          if (href) {
+            const a = document.createElement("a");
+            a.setAttribute("href", href);
+            a.style.textDecoration = "none";
+            node.parentNode?.insertBefore(a, node);
+            a.appendChild(node);
           }
         });
 
@@ -3798,9 +3843,11 @@ ${bodyHtml}
     await incrementLatexCount();
   };
 
-  const handleFixLogic = () => {
+  const handleFixLogic = async () => {
     const textarea = textareaRef.current;
     if (!textarea) return;
+
+    if (isFixingLogic) return;
 
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
@@ -3808,33 +3855,83 @@ ${bodyHtml}
     
     const textToProcess = isSelected ? inputText.substring(start, end) : inputText;
 
-    let fixedText = textToProcess;
-    
-    // Fix common Markdown list bugs: "* *item**" -> "**item**"
-    // Matches anywhere: space or start of line, "* *", then anything, then "**"
-    fixedText = fixedText.replace(/(^|\s)\*\s+\*(.*?)\*\*/g, '$1**$2**');
-    
-    // Also fix cases where a list item has a space inside its bold marker: "* ** Tên**" -> "* **Tên**"
-    fixedText = fixedText.replace(/\*\s+\*\*/g, '***');
-    fixedText = fixedText.replace(/\*\*\s+\*/g, '***');
-    
-    // Fix broken heading tags
-    fixedText = fixedText.replace(/^#\s+#/gm, '##');
-    
-    // Fix broken bold tags anywhere if they are strictly wrapped like * *text* *
-    fixedText = fixedText.replace(/\*\s+\*(.*?)\*\s+\*/g, '**$1**');
+    if (!textToProcess.trim()) {
+      triggerToast("Vui lòng nhập hoặc bôi đen văn bản cần sửa logic!", false);
+      return;
+    }
 
-    if (isSelected) {
-      const newText = inputText.substring(0, start) + fixedText + inputText.substring(end);
-      setInputText(newText);
-      setTimeout(() => {
-        textarea.setSelectionRange(start, start + fixedText.length);
-        textarea.focus();
-      }, 0);
-      triggerToast("Đã sửa lỗi logic Markdown cho vùng được chọn!", true);
-    } else {
-      setInputText(fixedText);
-      triggerToast("Đã tự động sửa các lỗi khoảng trắng trong Markdown!", true);
+    const currentPromptCount = userDoc?.promptCount || 0;
+    if (!isApproved && currentPromptCount >= 8) {
+      triggerToast(
+        "Bạn đã đạt giới hạn 8 lượt sử dụng AI sửa logic mỗi ngày. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được nâng cấp không giới hạn!",
+        false,
+      );
+      return;
+    }
+
+    triggerToast("Bộ não AI đang chuẩn hóa định dạng, công thức toán và khôi phục bảng biểu...", true);
+    setIsFixingLogic(true);
+
+    try {
+      const res = await fetch("/api/fix-logic", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: textToProcess }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Không thể kết nối đến máy chủ AI");
+      }
+
+      const data = await res.json();
+      if (data.success && data.fixedText) {
+        const fixedText = data.fixedText;
+        if (isSelected) {
+          const newText = inputText.substring(0, start) + fixedText + inputText.substring(end);
+          setInputText(newText);
+          setTimeout(() => {
+            textarea.setSelectionRange(start, start + fixedText.length);
+            textarea.focus();
+          }, 0);
+          triggerToast("Đã tối ưu hóa định dạng vùng chọn thành công!", true);
+        } else {
+          setInputText(fixedText);
+          triggerToast("Đã tối ưu hóa trình bày toàn bộ văn bản bằng AI!", true);
+        }
+        await incrementPromptCount();
+      } else {
+        throw new Error(data.error || "Lỗi phản hồi từ AI");
+      }
+    } catch (err: any) {
+      console.error("Lỗi khi sửa logic:", err);
+      // Fallback to local regex-based logic
+      let fallbackText = textToProcess;
+         // Sửa lỗi gõ thiếu dấu sao cho in đậm dạng *chữ** -> **chữ** (tránh nuốt bullet point bằng cách loại trừ dấu * đứng trước và dấu * ngay sau đó)
+      fallbackText = fallbackText.replace(/(?<!\*)\*(?!\*)([^\*\s\n][^\*\n]*?)\*\*/g, '**$1**');
+      // Sửa lỗi gõ thiếu dấu sao cho in đậm dạng **chữ* -> **chữ**
+      fallbackText = fallbackText.replace(/\*\*([^\*\n]*?[^\*\s\n])(?<!\*)\*(?!\*)/g, '**$1**');
+      fallbackText = fallbackText.replace(/\*\s+\*\*/g, '***');
+      fallbackText = fallbackText.replace(/\*\*\s+\*/g, '***');
+      fallbackText = fallbackText.replace(/^#\s+#/gm, '##');
+       // Sửa lỗi dấu hoa thị bị cách bởi khoảng trắng trong in đậm
+      fallbackText = fallbackText.replace(/\*\*\s+(.*?)\s+\*\*/g, '**$1**');
+      
+      if (isSelected) {
+        const newText = inputText.substring(0, start) + fallbackText + inputText.substring(end);
+        setInputText(newText);
+        setTimeout(() => {
+          textarea.setSelectionRange(start, start + fallbackText.length);
+          textarea.focus();
+        }, 0);
+        triggerToast("Gặp sự cố kết nối AI. Đã áp dụng sửa lỗi cục bộ!", false);
+      } else {
+        setInputText(fallbackText);
+        triggerToast("Gặp sự cố kết nối AI. Đã áp dụng sửa lỗi cục bộ!", false);
+      }
+    } finally {
+      setIsFixingLogic(false);
     }
   };
 
@@ -4677,7 +4774,7 @@ ${bodyHtml}
                 {/* Main Workspaces Layout */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 flex-1">
                   {/* Left panel: Input Area */}
-                  <div className="flex flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden min-h-[400px] lg:min-h-[580px] flex-1">
+                    <div className="flex flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden h-[500px] lg:h-[600px] flex-1">
                     <div className="bg-gradient-to-r from-violet-100/60 via-sky-50/40 to-indigo-100/60 px-4 py-2.5 md:px-5 md:py-3.5 border-b border-indigo-200/40 flex justify-between items-center">
                       <span className="text-xs md:text-sm font-bold text-slate-700">
                         1. Nhập hoặc dán văn bản từ AI
@@ -4685,13 +4782,21 @@ ${bodyHtml}
                       <div className="flex gap-1 md:gap-2">
                         <button
                           onClick={handleFixLogic}
-                          className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center px-2 py-1 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                          disabled={isFixingLogic}
+                          className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-200/60 hover:bg-indigo-100 hover:border-indigo-300 disabled:opacity-60 disabled:bg-slate-50 disabled:border-slate-200 disabled:text-slate-400 font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-2xs group relative overflow-hidden"
+                          title="Sử dụng bộ não AI để chuẩn hóa định dạng, khôi phục bảng biểu và sửa lỗi LaTeX"
                         >
-                          Sửa lỗi Logic
+                          <div className="absolute inset-0 bg-gradient-to-r from-violet-400/0 via-violet-400/10 to-indigo-400/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700"></div>
+                          {isFixingLogic ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />
+                          ) : (
+                            <Sparkles className="h-3.5 w-3.5 text-indigo-500 group-hover:text-indigo-600 group-hover:animate-pulse" />
+                          )}
+                          <span className="relative z-10">{isFixingLogic ? "Đang xử lý AI..." : "AI Sửa lỗi Trình bày"}</span>
                         </button>
                         <button
                           onClick={handleClear}
-                          className="text-xs text-rose-600 hover:text-rose-800 font-bold flex items-center px-2 py-1 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          className="text-xs text-rose-600 bg-transparent border border-transparent hover:border-rose-200 font-bold flex items-center px-3 py-1.5 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                         >
                           Xóa tất cả
                         </button>
@@ -4729,7 +4834,8 @@ ${bodyHtml}
                       value={inputText}
                       onChange={(e) => setInputText(e.target.value)}
                       onPaste={handlePasteChange}
-                      className="flex-1 w-full p-4 md:p-5 resize-none border-0 focus:ring-0 focus:outline-none text-slate-700 leading-relaxed text-sm md:text-base font-normal placeholder:text-slate-400 bg-linear-to-b from-white to-slate-50/20"
+                      disabled={isFixingLogic}
+                      className={`flex-1 w-full p-4 md:p-5 resize-none border-0 focus:ring-0 focus:outline-none text-slate-700 leading-relaxed text-sm md:text-base font-normal placeholder:text-slate-400 bg-linear-to-b from-white to-slate-50/20 ${isFixingLogic ? 'opacity-50 cursor-not-allowed' : 'opacity-100'} transition-opacity duration-300`}
                       placeholder="Nhập hoặc bôi đen copy cuộc trò chuyện chứa công thức toán ($x^2$ hoặc $$y = mx+b$$) từ ChatGPT, Gemini rồi dán trực tiếp vào đây..."
                     />
 
@@ -4745,7 +4851,7 @@ ${bodyHtml}
                   </div>
 
                   {/* Right panel: Preview & Advanced Copy Area */}
-                  <div className="flex flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden min-h-[400px] lg:min-h-[580px] flex-1">
+                  <div className="flex flex-col bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden h-[500px] lg:h-[600px] flex-1">
                     {/* Header with Switch output tabs */}
                     <div className="bg-gradient-to-r from-violet-100/60 via-sky-50/40 to-indigo-100/60 px-3 py-2 md:px-4 md:py-2.5 border-b border-indigo-200/40 flex flex-wrap justify-between items-center gap-2">
                       <div className="flex bg-slate-200/60 p-0.5 rounded-lg text-[11px] md:text-xs font-semibold gap-0.5">
@@ -5832,11 +5938,14 @@ ${bodyHtml}
 
                                         {parsed.options.length > 0 && (
                                           <div
-                                            className="doc-options-container grid gap-2 mt-2"
+                                            className={`doc-options-container grid gap-2 mt-2 ${
+                                              (q.columns || 4) === 4
+                                                ? "grid-cols-1 sm:grid-cols-2 md:grid-cols-4"
+                                                : (q.columns || 4) === 2
+                                                ? "grid-cols-1 sm:grid-cols-2"
+                                                : "grid-cols-1"
+                                            }`}
                                             data-columns={q.columns || 4}
-                                            style={{
-                                              gridTemplateColumns: `repeat(${q.columns || 4}, minmax(0, 1fr))`,
-                                            }}
                                           >
                                             {parsed.options.map((opt, oIdx) => (
                                               <div

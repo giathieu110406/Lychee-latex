@@ -165,6 +165,15 @@ div.katex-custom-wrapper {
   font-size: 11pt !important;
 }
 
+@media (max-width: 768px) {
+  .preview-content table {
+    display: block;
+    overflow-x: auto;
+    width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 .preview-content th,
 .preview-content td {
   border: 1px solid #cbd5e1;
