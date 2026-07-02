@@ -271,11 +271,11 @@ async function generateContentWithRetry(params: any, retries = 3, delay = 1500) 
   let lastError = null;
   // Try the requested model first, then fall back to highly-available standard models if unavailable
   const modelsToTry = [
-    params.model,
-    "gemini-3.5-flash",
+    params.model || "gemini-3.1-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-3.1-pro-preview"
+    "gemini-3.5-flash",
+    "gemini-3.1-pro-preview",
+    "gemini-2.5-flash"
   ].filter((value, index, self) => self.indexOf(value) === index && value); // Remove duplicates and empty/falsy values
   
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -335,7 +335,7 @@ app.post("/api/parse-exam", async (req, res) => {
 
     // Call Gemini API using retry logic to parse the text with strict guidelines
     const response = await generateContentWithRetry({
-      model: "gemini-3.5-flash", // Use standard highly-available model by default
+      model: "gemini-3.1-flash-lite", // Use the fastest and lightest model by default
       contents: `Hãy phân tích văn bản đề thi dưới đây:\n\n${rawText}`,
       config: {
         systemInstruction: `Bạn là chuyên gia phân tích đề thi và bài tập học thuật. Hãy bóc tách văn bản đề bài thành các câu hỏi/bài tập hoàn chỉnh và trả về định dạng JSON theo các quy tắc nghiêm ngặt sau:
@@ -417,6 +417,72 @@ app.post("/api/parse-exam", async (req, res) => {
   }
 });
 
+// 3.2. API: Parse smart paste content using the fastest and lightest model (gemini-3.1-flash-lite)
+app.post("/api/smart-paste-parse", async (req, res) => {
+  try {
+    const { text } = req.body;
+    
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: "Nội dung văn bản trống" });
+    }
+
+    console.log("[Gemini API] Đang xử lý bóc tách và phân loại câu hỏi thô bằng model gemini-3.1-flash-lite...");
+
+    const response = await generateContentWithRetry({
+      model: "gemini-3.1-flash-lite", // The fastest and lightest AI model
+      contents: `Hãy phân tích, phân nhóm và bóc tách các câu hỏi từ văn bản dưới đây:\n\n${text}`,
+      config: {
+        systemInstruction: `Bạn là trợ lý AI chuyên môn cao đóng vai trò là bộ bóc tách cấu trúc câu hỏi thô (raw extractor) và phân loại câu hỏi cực kỳ chính xác.
+
+NHIỆM VỤ CỦA BẠN:
+1. Nhận diện các câu hỏi trong văn bản dán của người dùng, phân tách chúng thành các khối riêng biệt.
+2. Với mỗi khối câu hỏi:
+   - Trích xuất NGUYÊN BẢN (RAW) phần nội dung câu hỏi và các phương án lựa chọn (A, B, C, D nếu có) cho vào "questionRawText".
+   - Trích xuất NGUYÊN BẢN (RAW) phần đáp án, lời giải, giải thích hoặc hướng dẫn giải cho vào "answerRawText". Nếu không có đáp án, hãy để chuỗi rỗng "".
+3. Phân loại loại câu hỏi ("type") chính xác:
+   - 'trac_nghiem': Câu hỏi trắc nghiệm khách quan chọn một đáp án đúng (A, B, C, D).
+   - 'trac_nghiem_dung_sai': Câu hỏi trắc nghiệm Đúng/Sai.
+   - 'trac_nghiem_tra_loi_ngan': Câu hỏi trắc nghiệm điền khuyết / trả lời ngắn gọn.
+   - 'tu_luan': Câu hỏi tự luận lớn, chứng minh, giải thích dài.
+
+HƯỚNG DẪN CỰC KỲ QUAN TRỌNG:
+- TUYỆT ĐỐI GIỮ NGUYÊN BẢN (RAW TEXT): Không tự ý viết lại câu chữ, không sửa đổi ký hiệu, không sửa LaTeX (giữ nguyên $...$ hoặc $$...$$), không tóm tắt, không bổ sung từ ngữ mới. Bạn chỉ được phép cắt các chuỗi ký tự thô từ văn bản gốc của người dùng đưa vào đúng hai trường tương ứng.
+- KHÔNG TRỘN LẪN: Phần đáp án/lời giải/hướng dẫn giải phải được tách riêng hoàn toàn sang "answerRawText", không được để lẫn lộn trong "questionRawText".`,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            questions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  type: { 
+                    type: Type.STRING,
+                    description: "Phân loại câu hỏi: 'trac_nghiem', 'trac_nghiem_dung_sai', 'trac_nghiem_tra_loi_ngan', 'tu_luan'."
+                  },
+                  questionRawText: { type: Type.STRING, description: "Toàn bộ chuỗi nguyên bản thô của câu hỏi và các lựa chọn trắc nghiệm." },
+                  answerRawText: { type: Type.STRING, description: "Toàn bộ chuỗi nguyên bản thô của phần đáp án, lời giải hoặc hướng dẫn giải (nếu có)." }
+                },
+                required: ["type", "questionRawText"]
+              }
+            }
+          },
+          required: ["questions"]
+        }
+      }
+    });
+
+    const parsedJson = JSON.parse(response.text?.trim() || "{}");
+    const questions = parsedJson.questions || [];
+    return res.json({ success: true, questions });
+
+  } catch (error: any) {
+    console.error("Lỗi khi xử lý dán thông minh bằng Gemini:", error);
+    return res.status(500).json({ error: error.message || "Lỗi máy chủ khi dán thông minh" });
+  }
+});
+
 // 3.5. API: Fix logical & presentational formatting errors using Gemini API ("AI brain")
 app.post("/api/fix-logic", async (req, res) => {
   try {
@@ -430,7 +496,7 @@ app.post("/api/fix-logic", async (req, res) => {
 
     // Call Gemini API using retry logic to fix the text with strict presentation guidelines
     const response = await generateContentWithRetry({
-      model: "gemini-3.5-flash", // Use standard highly-available model by default
+      model: "gemini-3.1-flash-lite", // Use the fastest and lightest model by default
       contents: `Hãy tối ưu hóa hiển thị và sửa toàn bộ các lỗi trình bày, lỗi logic định dạng cho văn bản tiếng Việt sau đây:\n\n${text}`,
       config: {
         systemInstruction: `Bạn là chuyên gia định dạng tài liệu học thuật (Markdown, LaTeX và bảng biểu).
@@ -536,6 +602,59 @@ HÃY TUÂN THỦ CÁC QUY TẮC CHẶT CHẼ SAU:
   } catch (error: any) {
     console.error("Lỗi trợ lý AI Canvas:", error);
     return res.status(500).json({ error: error.message || "Lỗi máy chủ khi gọi trợ lý AI Canvas" });
+  }
+});
+
+// 3.7. API: Vary exam questions numbers and context using Gemini API for exam shuffling
+app.post("/api/exam/shuffle-ai", async (req, res) => {
+  try {
+    const { questions } = req.body;
+
+    if (!questions || !Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({ error: "Thiếu danh sách câu hỏi" });
+    }
+
+    console.log("[Gemini API] Đang gửi yêu cầu thay thế số liệu đề thi bằng AI...");
+
+    const response = await generateContentWithRetry({
+      model: "gemini-3.1-flash-lite", // Use the fastest and lightest model by default
+      contents: `Dưới đây là danh sách câu hỏi trong đề thi. Với mỗi câu hỏi, hãy THAY ĐỔI CÁC SỐ LIỆU (số tự nhiên, số thực, phân số, tọa độ...), biến số hoặc ngữ cảnh nhỏ trong câu hỏi sao cho vẫn GIỮ NGUYÊN cấu trúc toán học/logic và phương pháp giải bài toán đó. Tuyệt đối không thay đổi phương pháp giải hoặc bản chất câu hỏi.
+Nếu là câu hỏi trắc nghiệm có các phương án lựa chọn A, B, C, D, hãy đảm bảo tính toán lại các phương án nhiễu và phương án đúng một cách chính xác theo số liệu mới đã thay thế.
+Trả về dữ liệu dưới dạng JSON với định dạng là một mảng đối tượng giống hệt đầu vào, chứa "id", "type", và "questionText" đã được thay đổi số liệu. Đặt mảng này trong thuộc tính "questions" của đối tượng JSON trả về.
+
+Danh sách câu hỏi cần thay thế số liệu:
+${JSON.stringify(questions, null, 2)}`,
+      config: {
+        systemInstruction: "Bạn là chuyên gia toán học và khảo sát đề thi chuyên nghiệp. Nhiệm vụ của bạn là lấy các câu hỏi học thuật từ người dùng, thay thế các con số hoặc ngữ cảnh nhẹ nhàng mà không thay đổi cách giải quyết, đảm bảo các tùy chọn trắc nghiệm được cập nhật chính xác theo số liệu mới.",
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            questions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  type: { type: Type.STRING },
+                  questionText: { type: Type.STRING }
+                },
+                required: ["id", "type", "questionText"]
+              }
+            }
+          },
+          required: ["questions"]
+        }
+      }
+    });
+
+    const parsedJson = JSON.parse(response.text?.trim() || "{}");
+    const updatedQuestions = parsedJson.questions || [];
+
+    return res.json({ success: true, questions: updatedQuestions });
+  } catch (error: any) {
+    console.error("Lỗi khi thay số bằng AI:", error);
+    return res.status(500).json({ error: error.message || "Lỗi máy chủ khi thay số câu hỏi bằng AI" });
   }
 });
 

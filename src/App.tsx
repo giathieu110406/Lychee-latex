@@ -391,6 +391,14 @@ export default function App() {
   const [generalNoticeTarget, setGeneralNoticeTarget] = useState<string>("all");
   const [isSendingGeneralNotice, setIsSendingGeneralNotice] = useState<boolean>(false);
 
+  // States for viewing, editing, and deleting notifications (Admin only)
+  const [allNotifications, setAllNotifications] = useState<any[]>([]);
+  const [editingNotificationId, setEditingNotificationId] = useState<string | null>(null);
+  const [editingNoticeTitle, setEditingNoticeTitle] = useState<string>("");
+  const [editingNoticeContent, setEditingNoticeContent] = useState<string>("");
+  const [editingNoticeTarget, setEditingNoticeTarget] = useState<string>("all");
+  const [isUpdatingGeneralNotice, setIsUpdatingGeneralNotice] = useState<boolean>(false);
+
   // Reply form state
   const [activeReplyFeedbackId, setActiveReplyFeedbackId] = useState<string | null>(null);
   const [feedbackReplyText, setFeedbackReplyText] = useState<string>("");
@@ -408,6 +416,8 @@ export default function App() {
   const [feedbackImage, setFeedbackImage] = useState<string>("");
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
   const [deletingFeedbackId, setDeletingFeedbackId] = useState<string | null>(null);
+  const [deletingNotificationId, setDeletingNotificationId] = useState<string | null>(null);
+  const [showShuffleConfirm, setShowShuffleConfirm] = useState<boolean>(false);
 
   // --- NOTIFICATION STATE ---
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -658,8 +668,11 @@ export default function App() {
   const [tuLuanQuestionText, setTuLuanQuestionText] = useState<string>("");
   const [tuLuanAnswerText, setTuLuanAnswerText] = useState<string>("");
   const [showSmartPasteModal, setShowSmartPasteModal] = useState<boolean>(false);
+  const [isAIShuffleEnabled, setIsAIShuffleEnabled] = useState<boolean>(false);
+  const [isShuffling, setIsShuffling] = useState<boolean>(false);
   const [smartPasteText, setSmartPasteText] = useState<string>("");
   const [smartPasteStep, setSmartPasteStep] = useState<1 | 2>(1);
+  const [isSmartPasteParsing, setIsSmartPasteParsing] = useState<boolean>(false);
   const [parsedPreviewQuestions, setParsedPreviewQuestions] = useState<any[]>([]);
   const [docTitle, setDocTitle] = useState<string>(
     "ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN SỐ HỌC & GIẢI TÍCH",
@@ -1087,7 +1100,7 @@ export default function App() {
     }
   };
 
-  const handleSmartPasteProcess = () => {
+  const handleSmartPasteProcess = async () => {
     if (!smartPasteText.trim()) {
       triggerToast("Nội dung dán không được để trống!", false);
       return;
@@ -1095,21 +1108,63 @@ export default function App() {
     const currentPromptCount = userDoc?.promptCount || 0;
     if (!isApproved && currentPromptCount >= 10) {
       triggerToast(
-        "Bạn đã đạt giới hạn tính năng dán thông minh (AI) trong ngày (tối đa 10 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        "Bạn đã tới giới hạn tính năng dán thông minh (AI). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
         false,
       );
       return;
     }
 
     if (smartPasteStep === 1) {
-      const previewList = parseMultipleQuestionsTextToPreview(smartPasteText);
-      if (previewList.length === 0) {
-        triggerToast("Không nhận diện được câu hỏi nào. Vui lòng kiểm tra lại định dạng!", false);
-        return;
+      setIsSmartPasteParsing(true);
+      try {
+        const response = await fetch("/api/smart-paste-parse", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: smartPasteText }),
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || "Lỗi xử lý dán thông minh bằng AI");
+        }
+
+        const data = await response.json();
+        if (data.success && data.questions && data.questions.length > 0) {
+          const previewList = data.questions.map((q: any) => ({
+            id: q.id || "q_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
+            type: q.type || "trac_nghiem",
+            questionText: getCleanQuestionBody(q.questionRawText || ""),
+            answerText: getCleanAnswerBody(q.answerRawText || ""),
+            columns: q.type === "trac_nghiem" ? newTracNghiemColumns : undefined,
+          }));
+          setParsedPreviewQuestions(previewList);
+          setSmartPasteStep(2);
+          triggerToast("Đã phân tách thông minh bằng AI thành công! Hãy xem trước kết quả.", true);
+        } else {
+          // Fallback to client-side heuristic parser
+          const previewList = parseMultipleQuestionsTextToPreview(smartPasteText);
+          if (previewList.length === 0) {
+            triggerToast("Không nhận diện được câu hỏi nào. Vui lòng kiểm tra lại định dạng!", false);
+            return;
+          }
+          setParsedPreviewQuestions(previewList);
+          setSmartPasteStep(2);
+          triggerToast("Đã phân tách thành công (sử dụng thuật toán dự phòng)!", true);
+        }
+      } catch (error: any) {
+        console.error("Lỗi dán thông minh AI:", error);
+        // Fallback to client-side heuristic parser
+        const previewList = parseMultipleQuestionsTextToPreview(smartPasteText);
+        if (previewList.length === 0) {
+          triggerToast("Không thể phân tách nội dung. Vui lòng kiểm tra lại định dạng!", false);
+          return;
+        }
+        setParsedPreviewQuestions(previewList);
+        setSmartPasteStep(2);
+        triggerToast("Đã phân tách thành công (sử dụng thuật toán dự phòng do lỗi kết nối AI)!", true);
+      } finally {
+        setIsSmartPasteParsing(false);
       }
-      setParsedPreviewQuestions(previewList);
-      setSmartPasteStep(2);
-      triggerToast("Đã phân tách thành công! Hãy xem trước kết quả bên dưới.", true);
     } else {
       if (parsedPreviewQuestions.length === 0) {
         triggerToast("Không có câu hỏi nào để nhập!", false);
@@ -1134,6 +1189,84 @@ export default function App() {
     setShowSmartPasteModal(false);
     setSmartPasteStep(1);
     setParsedPreviewQuestions([]);
+  };
+
+  const handleShuffleExam = async () => {
+    if (docQuestions.length === 0) {
+      triggerToast("Không có câu hỏi nào để trộn đề thi!", false);
+      return;
+    }
+
+    setIsShuffling(true);
+    try {
+      // 1. Shuffle order first
+      const shuffled = [...docQuestions];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+
+      if (isAIShuffleEnabled) {
+        const currentPromptCount = userDoc?.promptCount || 0;
+        if (!isApproved && currentPromptCount >= 10) {
+          triggerToast(
+            "Bạn đã tới giới hạn tính năng AI thay thế số liệu. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+            false
+          );
+          setIsShuffling(false);
+          return;
+        }
+
+        // Send to backend for AI variation
+        const response = await fetch("/api/exam/shuffle-ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            questions: shuffled.map(q => ({
+              id: q.id,
+              type: q.type,
+              questionText: q.questionText
+            }))
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || "Lỗi máy chủ khi đảo số liệu");
+        }
+
+        const data = await response.json();
+        if (data.success && Array.isArray(data.questions)) {
+          const updated = shuffled.map(q => {
+            const aiQ = data.questions.find((item: any) => item.id === q.id);
+            return {
+              ...q,
+              questionText: aiQ ? aiQ.questionText : q.questionText,
+              answerText: "" // Ensure all answers are deleted
+            };
+          });
+          const renumbered = renumberQuestions(updated);
+          setDocQuestions(renumbered);
+          await incrementPromptCount();
+          triggerToast("Đã đảo thứ tự câu và thay số bằng AI thành công!", true);
+        } else {
+          throw new Error("Không nhận được dữ liệu hợp lệ từ AI");
+        }
+      } else {
+        const updated = shuffled.map(q => ({
+          ...q,
+          answerText: "" // Ensure all answers are deleted
+        }));
+        const renumbered = renumberQuestions(updated);
+        setDocQuestions(renumbered);
+        triggerToast("Đã đảo thứ tự câu hỏi và ẩn đáp án thành công!", true);
+      }
+    } catch (error: any) {
+      console.error(error);
+      triggerToast(`Có lỗi xảy ra: ${error.message || "Không thể trộn đề"}`, false);
+    } finally {
+      setIsShuffling(false);
+    }
   };
 
   const copyDocToWord = async () => {
@@ -2179,6 +2312,36 @@ export default function App() {
     return unsubscribeFeedbacks;
   }, [user, userDoc]);
 
+  // Synchronize all notifications for the admin console
+  useEffect(() => {
+    const isAdmin = isAdminUser(user, userDoc);
+    if (!user || !isAdmin) {
+      setAllNotifications([]);
+      return;
+    }
+
+    const unsubscribeNotifications = onSnapshot(
+      collection(db, "notifications"),
+      (querySnap) => {
+        const list: any[] = [];
+        querySnap.forEach((docSnap) => {
+          list.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        list.sort((a, b) => {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return dateB - dateA;
+        });
+        setAllNotifications(list);
+      },
+      (err) => {
+        console.warn("Cảnh báo đồng bộ danh sách thông báo:", err);
+      }
+    );
+
+    return unsubscribeNotifications;
+  }, [user, userDoc]);
+
   // --- ADMIN PANEL HANDLERS ---
   const handleUpdateUserStatus = async (targetUid: string, status: "approved" | "pending" | "rejected") => {
     try {
@@ -2291,8 +2454,58 @@ export default function App() {
     }
   };
 
+  const handleUpdateGeneralNotification = async () => {
+    if (!editingNotificationId) return;
+    if (!editingNoticeTitle.trim() || !editingNoticeContent.trim()) {
+      triggerToast("Vui lòng nhập đầy đủ tiêu đề và nội dung.", false);
+      return;
+    }
+    setIsUpdatingGeneralNotice(true);
+    try {
+      let targetEmail = "Tất cả thành viên";
+      if (editingNoticeTarget !== "all") {
+        const found = allUsers.find((u) => u.uid === editingNoticeTarget);
+        targetEmail = found ? found.email || "Người dùng" : "Thành viên được chỉ định";
+      }
+
+      await updateDoc(doc(db, "notifications", editingNotificationId), {
+        title: editingNoticeTitle.trim(),
+        content: editingNoticeContent.trim(),
+        type: editingNoticeTarget === "all" ? "system" : "user",
+        targetUid: editingNoticeTarget,
+        targetEmail: targetEmail,
+      });
+
+      triggerToast("Đã cập nhật thông báo thành công!");
+      setEditingNotificationId(null);
+      setEditingNoticeTitle("");
+      setEditingNoticeContent("");
+      setEditingNoticeTarget("all");
+    } catch (e) {
+      console.error("Lỗi cập nhật thông báo:", e);
+      triggerToast("Lỗi khi cập nhật thông báo.", false);
+    } finally {
+      setIsUpdatingGeneralNotice(false);
+    }
+  };
+
+  const handleDeleteGeneralNotification = async (noticeId: string) => {
+    try {
+      await deleteDoc(doc(db, "notifications", noticeId));
+      triggerToast("Xóa thông báo thành công.");
+      if (editingNotificationId === noticeId) {
+        setEditingNotificationId(null);
+        setEditingNoticeTitle("");
+        setEditingNoticeContent("");
+        setEditingNoticeTarget("all");
+      }
+    } catch (e) {
+      console.error("Lỗi khi xóa thông báo:", e);
+      triggerToast("Lỗi khi xóa thông báo.", false);
+    }
+  };
+
   const handleDeleteFeedback = async (feedbackId: string) => {
-    if (!confirm("Bạn có chắc chắn muốn xóa phản hồi này?")) return;
     try {
       await deleteDoc(doc(db, "feedbacks", feedbackId));
       triggerToast("Xóa phản hồi thành công.");
@@ -2302,7 +2515,6 @@ export default function App() {
   };
 
   const handleDeleteUserRecord = async (targetUid: string) => {
-    if (!confirm("Bạn có chắc muốn xóa bản ghi thành viên này khỏi cơ sở dữ liệu? (Hành động này không xóa tài khoản Google Auth)")) return;
     try {
       await deleteDoc(doc(db, "users", targetUid));
       triggerToast("Đã xóa bản ghi thành viên.");
@@ -3158,7 +3370,7 @@ ${cleanedBody}
       const currentPromptCount = userDoc?.promptCount || 0;
       if (!isApproved && currentPromptCount >= 10) {
         triggerToast(
-          "Bạn đã đạt giới hạn tính năng dán thông minh (AI) trong ngày (tối đa 10 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+          "Bạn đã tới giới hạn tính năng dán thông minh (AI). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
           false,
         );
         return;
@@ -4147,7 +4359,7 @@ ${bodyHtml}
     const currentPromptCount = userDoc?.promptCount || 0;
     if (!isApproved && currentPromptCount >= 10) {
       triggerToast(
-        "Bạn đã đạt giới hạn tính năng Trợ lý AI Canvas trong ngày (tối đa 10 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        "Bạn đã tới giới hạn tính năng Trợ lý AI Canvas. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
         false,
       );
       return;
@@ -4951,20 +5163,33 @@ ${bodyHtml}
 
             {/* Sub-tab 3: Notification Broadcaster */}
             {adminSubTab === "notify" && (
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 md:p-6 flex-1 flex flex-col">
-                <div className="max-w-2xl w-full mx-auto space-y-6 py-4">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                {/* Form column */}
+                <div className="lg:col-span-5 bg-white rounded-2xl shadow-sm border border-slate-200 p-5 md:p-6 space-y-5">
                   <div>
-                    <h2 className="text-lg font-bold text-slate-800">📢 Phát Thông Báo Hệ Thống</h2>
-                    <p className="text-xs text-slate-500 mt-0.5">Soạn tin nhắn thông báo gửi trực tiếp tới hòm thư của một thành viên hoặc toàn bộ hệ thống.</p>
+                    <h2 className="text-base font-black text-slate-800 flex items-center gap-2">
+                      {editingNotificationId ? "✏️ Chỉnh Sửa Thông Báo" : "📢 Phát Thông Báo Hệ Thống"}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {editingNotificationId 
+                        ? "Cập nhật lại tiêu đề, nội dung hoặc đối tượng nhận thông báo này."
+                        : "Soạn tin nhắn thông báo gửi trực tiếp tới hòm thư của một thành viên hoặc toàn bộ hệ thống."}
+                    </p>
                   </div>
 
                   <div className="space-y-4">
                     <div className="space-y-1.5">
-                      <label className="text-xs md:text-sm font-bold text-slate-700">Đối tượng nhận thông báo:</label>
+                      <label className="text-xs font-bold text-slate-700">Đối tượng nhận thông báo:</label>
                       <select
-                        value={generalNoticeTarget}
-                        onChange={(e) => setGeneralNoticeTarget(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs md:text-sm outline-none transition-all cursor-pointer"
+                        value={editingNotificationId ? editingNoticeTarget : generalNoticeTarget}
+                        onChange={(e) => {
+                          if (editingNotificationId) {
+                            setEditingNoticeTarget(e.target.value);
+                          } else {
+                            setGeneralNoticeTarget(e.target.value);
+                          }
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-400 hover:border-slate-300 rounded-xl px-3.5 py-2.5 text-xs md:text-sm outline-none transition-all cursor-pointer font-medium"
                       >
                         <option value="all">📢 Phát sóng tới tất cả thành viên</option>
                         {allUsers.map((u) => (
@@ -4976,36 +5201,184 @@ ${bodyHtml}
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs md:text-sm font-bold text-slate-700">Tiêu đề thông báo:</label>
+                      <label className="text-xs font-bold text-slate-700">Tiêu đề thông báo:</label>
                       <input
                         type="text"
-                        value={generalNoticeTitle}
-                        onChange={(e) => setGeneralNoticeTitle(e.target.value)}
+                        value={editingNotificationId ? editingNoticeTitle : generalNoticeTitle}
+                        onChange={(e) => {
+                          if (editingNotificationId) {
+                            setEditingNoticeTitle(e.target.value);
+                          } else {
+                            setGeneralNoticeTitle(e.target.value);
+                          }
+                        }}
                         placeholder="Ví dụ: Cập nhật hệ thống v2.0 hoặc Hướng dẫn sử dụng..."
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs md:text-sm outline-none transition-all focus:border-indigo-400 focus:bg-white"
+                        className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-400 focus:bg-white rounded-xl px-3.5 py-2.5 text-xs md:text-sm outline-none transition-all font-medium"
                       />
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs md:text-sm font-bold text-slate-700">Nội dung chi tiết thông báo:</label>
+                      <label className="text-xs font-bold text-slate-700">Nội dung chi tiết thông báo:</label>
                       <textarea
-                        value={generalNoticeContent}
-                        onChange={(e) => setGeneralNoticeContent(e.target.value)}
+                        value={editingNotificationId ? editingNoticeContent : generalNoticeContent}
+                        onChange={(e) => {
+                          if (editingNotificationId) {
+                            setEditingNoticeContent(e.target.value);
+                          } else {
+                            setGeneralNoticeContent(e.target.value);
+                          }
+                        }}
                         placeholder="Nhập nội dung đầy đủ của thông báo..."
-                        rows={6}
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs md:text-sm outline-none transition-all focus:border-indigo-400 focus:bg-white"
+                        rows={5}
+                        className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-400 focus:bg-white rounded-xl px-3.5 py-2.5 text-xs md:text-sm outline-none transition-all font-medium"
                       />
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={handleSendGeneralNotification}
-                      disabled={isSendingGeneralNotice}
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white py-2.5 rounded-xl font-bold text-xs md:text-sm shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
-                    >
-                      {isSendingGeneralNotice && <Loader2 className="h-4 w-4 animate-spin" />}
-                      Phát Thông Báo Ngay
-                    </button>
+                    {editingNotificationId ? (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleUpdateGeneralNotification}
+                          disabled={isUpdatingGeneralNotice}
+                          className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white py-2.5 rounded-xl font-bold text-xs md:text-sm shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          {isUpdatingGeneralNotice && <Loader2 className="h-4 w-4 animate-spin" />}
+                          Cập nhật ngay
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingNotificationId(null);
+                            setEditingNoticeTitle("");
+                            setEditingNoticeContent("");
+                            setEditingNoticeTarget("all");
+                          }}
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-600 py-2.5 px-4 rounded-xl font-bold text-xs md:text-sm transition-all cursor-pointer"
+                        >
+                          Hủy
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSendGeneralNotification}
+                        disabled={isSendingGeneralNotice}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white py-2.5 rounded-xl font-bold text-xs md:text-sm shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        {isSendingGeneralNotice && <Loader2 className="h-4 w-4 animate-spin" />}
+                        Phát Thông Báo Ngay
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* History list column */}
+                <div className="lg:col-span-7 bg-white rounded-2xl shadow-sm border border-slate-200 p-5 md:p-6 flex flex-col min-h-[400px]">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h2 className="text-base font-black text-slate-800">📋 Lịch Sử Thông Báo ({allNotifications.length})</h2>
+                      <p className="text-xs text-slate-400 mt-1">Các thông báo hệ thống và cá nhân đã được gửi đi.</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3.5 max-h-[500px] overflow-y-auto pr-1">
+                    {allNotifications.map((n) => {
+                      const dateStr = n.createdAt
+                        ? new Date(n.createdAt).toLocaleString("vi-VN", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : "N/A";
+
+                      const isSystem = n.type === "system" || n.targetUid === "all";
+
+                      return (
+                        <div
+                          key={n.id}
+                          className={`p-4 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-start justify-between gap-3 ${
+                            editingNotificationId === n.id
+                              ? "bg-indigo-50/50 border-indigo-200 ring-1 ring-indigo-200"
+                              : "bg-slate-50/30 hover:bg-slate-50/75 border-slate-150"
+                          }`}
+                        >
+                          <div className="space-y-1 flex-1 min-w-0">
+                            <div className="flex items-center flex-wrap gap-2">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                                  isSystem
+                                    ? "bg-amber-50 text-amber-700 border border-amber-100"
+                                    : "bg-blue-50 text-blue-700 border border-blue-100"
+                                }`}
+                              >
+                                {isSystem ? "Hệ thống" : "Cá nhân"}
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-medium font-mono">{dateStr}</span>
+                            </div>
+
+                            <h3 className="text-xs md:text-sm font-bold text-slate-800 line-clamp-1">{n.title}</h3>
+                            <p className="text-xs text-slate-500 whitespace-pre-wrap leading-relaxed break-words">{n.content}</p>
+
+                            <div className="text-[10px] text-slate-400 font-medium flex items-center gap-1 mt-1.5">
+                              <span className="font-semibold text-slate-500">Người nhận:</span>{" "}
+                              <span className="bg-slate-100 px-1.5 py-0.5 rounded-md text-slate-600 font-mono text-[9px]">
+                                {n.targetEmail || (isSystem ? "Tất cả" : "N/A")}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex sm:flex-col gap-1.5 justify-end items-end shrink-0 pt-1 sm:pt-0">
+                            <button
+                              onClick={() => {
+                                setEditingNotificationId(n.id);
+                                setEditingNoticeTitle(n.title || "");
+                                setEditingNoticeContent(n.content || "");
+                                setEditingNoticeTarget(n.targetUid || "all");
+                                // Scroll to top if on mobile
+                                window.scrollTo({ top: 0, behavior: "smooth" });
+                              }}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer"
+                            >
+                              Sửa
+                            </button>
+                            {deletingNotificationId === n.id ? (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={async () => {
+                                    await handleDeleteGeneralNotification(n.id);
+                                    setDeletingNotificationId(null);
+                                  }}
+                                  className="text-[11px] text-white bg-rose-600 hover:bg-rose-700 px-2 py-1.5 rounded-lg font-bold transition-all cursor-pointer"
+                                >
+                                  Chắc chắn
+                                </button>
+                                <button
+                                  onClick={() => setDeletingNotificationId(null)}
+                                  className="text-[11px] text-slate-500 bg-slate-100 hover:bg-slate-200 px-2 py-1.5 rounded-lg font-bold transition-all cursor-pointer"
+                                >
+                                  Hủy
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setDeletingNotificationId(n.id)}
+                                className="text-xs text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 px-2.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer"
+                              >
+                                Xóa
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {allNotifications.length === 0 && (
+                      <div className="py-12 text-center text-slate-400 italic text-xs">
+                        Chưa phát thông báo nào.
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -6144,30 +6517,123 @@ ${bodyHtml}
                   {/* Panel 2: EXPORT PREVIEW (Phải) */}
                   <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden flex flex-col min-h-[500px]">
                     {/* Actions Area */}
-                    <div className="bg-gradient-to-r from-violet-100/60 via-sky-50/40 to-indigo-100/60 p-4 border-b border-indigo-200/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold">
-                      <span className="text-slate-700 uppercase">
-                        XEM TRƯỚC VÀ XUẤT ĐỀ THI HOÀN CHỈNH
-                      </span>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={copyDocToWord}
-                          disabled={docQuestions.length === 0}
-                          className="bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-50"
-                        >
-                          Sao chép cho Word
-                        </button>
-                        <button
-                          onClick={downloadDocAsWord}
-                          disabled={docQuestions.length === 0}
-                          className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer disabled:opacity-50"
-                        >
-                          Tải đề thi (.doc)
-                        </button>
+                    <div className="bg-slate-50/70 p-4 md:p-5 border-b border-slate-200 flex flex-col gap-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600 border border-indigo-100/50">
+                            <FileText className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-xs font-extrabold tracking-wider text-slate-800 uppercase">
+                              Xem trước & Xuất đề thi
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+                          {/* Shuffle button */}
+                          <button
+                            onClick={() => {
+                              if (docQuestions.length === 0) {
+                                triggerToast("Không có câu hỏi nào để trộn đề thi!", false);
+                                return;
+                              }
+                              setShowShuffleConfirm(true);
+                            }}
+                            disabled={docQuestions.length === 0 || isShuffling}
+                            className="bg-white hover:bg-slate-50 active:bg-slate-100 border border-slate-200 text-slate-700 px-3.5 py-2 rounded-lg font-bold text-[11px] transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
+                          >
+                            {isShuffling ? (
+                              <>
+                                <svg className="animate-spin h-3.5 w-3.5 text-slate-500" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span>Đang đảo...</span>
+                              </>
+                            ) : (
+                              <>
+                                <svg className="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3 3L22 4" />
+                                </svg>
+                                <span>Trộn đề thi</span>
+                              </>
+                            )}
+                          </button>
+
+                          {/* Download button */}
+                          <button
+                            onClick={downloadDocAsWord}
+                            disabled={docQuestions.length === 0}
+                            className="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white px-3.5 py-2 rounded-lg font-bold text-[11px] transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
+                          >
+                            <svg className="w-3.5 h-3.5 text-indigo-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            <span>Tải Word (.doc)</span>
+                          </button>
+                        </div>
                       </div>
+
+                      {/* Shuffle confirmation row with warning details and AI toggle */}
+                      {showShuffleConfirm && (
+                        <div className="bg-amber-50/75 border border-amber-200/70 rounded-xl p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3.5 animate-fadeIn">
+                          <div className="flex items-start gap-2.5">
+                            <div className="text-amber-600 shrink-0 mt-0.5">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                              </svg>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <p className="text-xs font-bold text-amber-800">
+                                Xác nhận trộn đề thi?
+                              </p>
+                              <p className="text-[11px] text-amber-700 leading-relaxed font-medium">
+                                Hệ thống sẽ xóa sạch tất cả đáp án hiện tại và xáo trộn ngẫu nhiên thứ tự các câu hỏi để tạo đề thi mới.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 shrink-0 md:justify-end">
+                            {/* Toggle AI mode */}
+                            <label className="flex items-center gap-2 cursor-pointer select-none text-[11px] font-bold text-indigo-700 bg-white hover:bg-indigo-50/50 px-3 py-1.5 rounded-lg border border-indigo-150 transition-all shadow-3xs">
+                              <input
+                                type="checkbox"
+                                checked={isAIShuffleEnabled}
+                                onChange={(e) => setIsAIShuffleEnabled(e.target.checked)}
+                                className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer accent-indigo-600 transition-all"
+                              />
+                              <span className="flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-indigo-500 animate-pulse" />
+                                AI thay thế số liệu
+                              </span>
+                            </label>
+
+                            <button
+                              onClick={async () => {
+                                await handleShuffleExam();
+                                setShowShuffleConfirm(false);
+                              }}
+                              className="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white px-3.5 py-1.5 rounded-lg font-bold text-[11px] transition-all cursor-pointer shadow-3xs"
+                            >
+                              Xác nhận
+                            </button>
+                            <button
+                              onClick={() => setShowShuffleConfirm(false)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg font-bold text-[11px] transition-all cursor-pointer"
+                            >
+                              Hủy
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Document preview container */}
-                    <div className="p-5 md:p-6 flex-1 overflow-y-auto max-h-[560px] bg-slate-50/20 border-b border-slate-100">
+                    <div 
+                      className="p-5 md:p-6 flex-1 overflow-y-auto max-h-[560px] bg-slate-50/20 border-b border-slate-100 select-none"
+                      onCopy={(e) => e.preventDefault()}
+                      onCut={(e) => e.preventDefault()}
+                    >
                       {docQuestions.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400 space-y-2">
                           <p className="text-xs font-medium">
@@ -6180,7 +6646,9 @@ ${bodyHtml}
                         <div
                           ref={docPreviewRef}
                           style={{ fontFamily: wordFont }}
-                          className="preview-content bg-white p-6 md:p-8 rounded-xl shadow-xs border border-slate-200 max-w-full overflow-hidden leading-relaxed text-sm md:text-base text-slate-800 space-y-6"
+                          className="preview-content bg-white p-6 md:p-8 rounded-xl shadow-xs border border-slate-200 max-w-full overflow-hidden leading-relaxed text-sm md:text-base text-slate-800 space-y-6 select-none"
+                          onCopy={(e) => e.preventDefault()}
+                          onCut={(e) => e.preventDefault()}
                         >
                           {/* Title header block */}
                           {docHeaderStyle === "centered" ? (
@@ -6194,7 +6662,7 @@ ${bodyHtml}
                               </p>
                             </div>
                           ) : (
-                            <div className="doc-header-block border-b-2 border-double border-slate-850 pb-4 select-text overflow-x-auto">
+                            <div className="doc-header-block border-b-2 border-double border-slate-850 pb-4 select-none overflow-x-auto">
                               <table
                                 style={{
                                   width: "100%",
@@ -6262,7 +6730,7 @@ ${bodyHtml}
                           )}
 
                           {/* List of Questions inside document */}
-                          <div className="space-y-6 select-all select-text text-left">
+                          <div className="space-y-6 select-none text-left">
                             {tracNghiemList.length > 0 && (
                               <div className="space-y-4">
                                 <div className="doc-section-header font-extrabold text-slate-900 border-b-2 border-slate-800 pb-1.5 text-left text-sm md:text-base uppercase flex items-center justify-between">
@@ -6594,20 +7062,33 @@ ${bodyHtml}
                         onChange={(e) => setSmartPasteText(e.target.value)}
                         onPaste={(e) => handlePasteGeneric(e, setSmartPasteText, true)}
                         placeholder="Dán (Ctrl+V) toàn bộ nội dung câu hỏi và đáp án từ ChatGPT/Gemini vào đây..."
-                        className="w-full h-64 p-4 text-sm rounded-xl border border-slate-200 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-slate-50"
+                        className="w-full h-64 p-4 text-sm rounded-xl border border-slate-200 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                        disabled={isSmartPasteParsing}
                       />
                       <div className="flex justify-end gap-3 mt-2">
                         <button
                           onClick={closeSmartPasteModal}
-                          className="px-4 py-2 text-slate-600 font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg text-sm transition-colors cursor-pointer"
+                          disabled={isSmartPasteParsing}
+                          className="px-4 py-2 text-slate-600 font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg text-sm transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           Hủy bỏ
                         </button>
                         <button
                           onClick={handleSmartPasteProcess}
-                          className="px-5 py-2 text-white font-bold bg-emerald-600 hover:bg-emerald-700 rounded-lg text-sm shadow-md transition-colors cursor-pointer"
+                          disabled={isSmartPasteParsing}
+                          className="px-5 py-2 text-white font-bold bg-emerald-600 hover:bg-emerald-700 rounded-lg text-sm shadow-md transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
                         >
-                          Phân tách & Xem trước
+                          {isSmartPasteParsing ? (
+                            <>
+                              <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                              <span>Đang phân tách bằng AI...</span>
+                            </>
+                          ) : (
+                            "Phân tách & Xem trước"
+                          )}
                         </button>
                       </div>
                     </>
