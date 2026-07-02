@@ -67,7 +67,7 @@ const databaseId = getCleanDatabaseId(process.env.FIREBASE_DATABASE_ID);
 const firebaseApp = initializeApp(firebaseConfig);
 const db = databaseId ? getFirestore(firebaseApp, databaseId) : getFirestore(firebaseApp);
 
-export const app = express();
+const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: "15mb" }));
@@ -725,12 +725,6 @@ app.post("/api/compile-latex", async (req, res) => {
 
 
 async function startServer() {
-  // If running on Vercel, do not call app.listen or register static file middlewares,
-  // as Vercel serves files statically via CDN and handles serverless routing natively.
-  if (process.env.VERCEL) {
-    return;
-  }
-
   // Vite developer middleware for rendering Vite React client assets
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
