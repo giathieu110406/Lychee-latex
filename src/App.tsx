@@ -13,7 +13,12 @@ import {
   LogOut,
   Bell,
   MessageSquare,
-  Settings
+  Settings,
+  Camera,
+  Image,
+  Trash2,
+  ZoomIn,
+  ArrowRight
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import katex from "katex";
@@ -188,242 +193,29 @@ function restoreUrls(
 function applySmartFormatting(text: string): string {
   if (!text) return "";
 
-  // Protect URLs from being formatted or split by commas/dots/digits rules
-  const { protectedText, urls } = protectUrls(text);
-  let formatted = protectedText;
+  let formatted = text;
 
-  // Mảng bảo vệ tạm thời cho các khối toán học và bảng biểu
-  const protectedBlocks: string[] = [];
+  // 1. Nhận dạng in đậm thiếu dấu sao ở đầu: *Đáp án đúng:** -> **Đáp án đúng**
+  // (ví dụ: * *Đáp án đúng:** sẽ thành * **Đáp án đúng**)
+  formatted = formatted.replace(/(?<!\*)\*(?!\s)([^\*\n]+?)\*\*/g, '**$1**');
 
-  // 1. Bảo vệ các dòng bảng biểu (bắt đầu bằng ký tự |)
-  let lines = formatted.split("\n");
-  lines = lines.map(line => {
-    if (line.trim().startsWith("|")) {
-      const idx = protectedBlocks.length;
-      protectedBlocks.push(line);
-      return `@@@PROTECTED_BLOCK_${idx}@@@`;
-    }
-    return line;
-  });
-  formatted = lines.join("\n");
+  // 2. Nhận dạng in nghiêng thiếu dấu sao ở đầu cho mục danh sách: * Nội dung*: -> * *Nội dung*:
+  formatted = formatted.replace(/^(\s*\*\s+)([^\*\n]+?)\*(?!\*)/gm, '$1*$2*');
 
-  // 2. Bảo vệ các khối toán học LaTeX để tránh bị định dạng nhầm
-  const DISPLAY_MATH_REGEX = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\begin\{(equation|align|gather|multline|eqnarray|alignat|flalign|split|cases|aligned|alignedat|pmatrix|bmatrix|vmatrix|Bmatrix|Vmatrix|matrix|array)(\*?)\}([\s\S]*?)\\end\{(?:equation|align|gather|multline|eqnarray|alignat|flalign|split|cases|aligned|alignedat|pmatrix|bmatrix|vmatrix|Bmatrix|Vmatrix|matrix|array)\*?\}/gi;
-  const INLINE_PAREN_REGEX = /\\\([\s\S]*?\\\)/g;
-  const INLINE_MATH_REGEX = /(?<!\$)\$(?!\$)((?:[^$\n\\]|\\[\s\S])*?)(?<!\$)\$(?!\$)/g;
-
-  // Trích xuất display math và environments
-  formatted = formatted.replace(DISPLAY_MATH_REGEX, (match) => {
-    const idx = protectedBlocks.length;
-    protectedBlocks.push(match);
-    return `@@@PROTECTED_BLOCK_${idx}@@@`;
-  });
-
-  // Trích xuất inline math bọc bằng \( \)
-  formatted = formatted.replace(INLINE_PAREN_REGEX, (match) => {
-    const idx = protectedBlocks.length;
-    protectedBlocks.push(match);
-    return `@@@PROTECTED_BLOCK_${idx}@@@`;
-  });
-
-  // Trích xuất inline math bọc bằng $ $
-  formatted = formatted.replace(INLINE_MATH_REGEX, (match) => {
-    const idx = protectedBlocks.length;
-    protectedBlocks.push(match);
-    return `@@@PROTECTED_BLOCK_${idx}@@@`;
-  });
-
-  // --- ÁP DỤNG CÁC QUY TẮC ĐỊNH DẠNG THÔNG MINH ---
-
-  // 1. Phân tách câu viết liền viết hoa sau inline math: $math$Đạo -> $math$\nĐạo
-  // Sử dụng Unicode property escapes để chuẩn xác với mọi loại phông tiếng Việt có dấu
-  const capWords = "[\\p{Lu}][\\p{Ll}\\p{M}]+";
-  const mathPattern = new RegExp("(\\$[^$\\n]+?\\$)(" + capWords + ")", "gu");
-  formatted = formatted.replace(mathPattern, "$1\n$2");
-
-  // 2. Phân tách câu viết liền viết hoa sau dấu câu: ).Đối -> ).\nĐối
-  const puncPattern = new RegExp("([.:!?]|\\))(" + capWords + ")", "gu");
-  formatted = formatted.replace(puncPattern, "$1\n$2");
-
-  // 3. Thêm dấu cách sau các dấu phẩy, dấu chấm phẩy nếu bị viết dính liền với từ tiếp theo
-  const commaPattern = new RegExp(
-    "([,;])(" + capWords + "|[\\p{Ll}\\p{M}]+)",
-    "gu",
-  );
-  formatted = formatted.replace(commaPattern, "$1 $2");
-
-  const letterPatternStr = "[\\p{L}\\p{M}]";
-
-  // 4. Sửa dính chữ giữa Chữ và Số (ví dụ: là50 -> là 50, và70 -> và 70)
-  // Chỉ áp dụng khi từ phía trước có độ dài từ 2 ký tự trở lên để tránh sửa nhầm các ví dụ như v2, x1...
-  const letterDigitPattern = new RegExp(
-    "(" + letterPatternStr + "{2,})(\\d)",
-    "gu",
-  );
-  formatted = formatted.replace(letterDigitPattern, "$1 $2");
-
-  // 5. Sửa dính chữ giữa Số và Chữ (ví dụ: 50%đối -> 50% đối, 70%đối -> 70% đối, 50đối -> 50 đối)
-  const digitLetterPattern = new RegExp(
-    "(\\d%?)(" + letterPatternStr + "{2,})",
-    "gu",
-  );
-  formatted = formatted.replace(digitLetterPattern, "$1 $2");
-
-  // 6. Sửa dính chữ trước dấu ngoặc kép: rủi ro"Moral -> rủi ro "Moral
-  const wordOpenQuotePattern = new RegExp(
-    "(" + letterPatternStr + '|\\d)(["“])',
-    "gu",
-  );
-  formatted = formatted.replace(wordOpenQuotePattern, "$1 $2");
-
-  // 7. Sửa dính chữ sau dấu ngoặc kép kết thúc: "Hazard"đối -> "Hazard" đối, hoặc "Hazard"(Rủi -> "Hazard" (Rủi
-  const closeQuoteWordPattern = new RegExp(
-    '(["”])(' + letterPatternStr + "|\\d|[(“])",
-    "gu",
-  );
-  formatted = formatted.replace(closeQuoteWordPattern, "$1 $2");
-
-  // 8. Sửa dính chữ trước dấu mở ngoặc đơn: báo cáo(DTI -> báo cáo (DTI
-  const wordOpenParenPattern = new RegExp(
-    "(" + letterPatternStr + "|\\d|%|\\))(\\()",
-    "gu",
-  );
-  formatted = formatted.replace(wordOpenParenPattern, "$1 $2");
-
-  // 9. Sửa dính chữ sau dấu đóng ngoặc đơn: đạo đức)từ -> đạo đức) từ
-  const closeParenWordPattern = new RegExp(
-    "(\\))(" + letterPatternStr + "{2,})",
-    "gu",
-  );
-  formatted = formatted.replace(closeParenWordPattern, "$1 $2");
-
-  // 10. Thêm khoảng cách thích hợp xung quanh các ký hiệu đô-la toán học ($ hoặc $$) dính liền with chữ/số thông thường
-  const letterMathStartPattern = new RegExp(
-    "(" + letterPatternStr + "|\\d|%)(\\${1,2})",
-    "gu",
-  );
-  formatted = formatted.replace(letterMathStartPattern, "$1 $2");
-
-  const mathEndLetterPattern = new RegExp(
-    "(\\${1,2})(" + letterPatternStr + "{2,})",
-    "gu",
-  );
-  formatted = formatted.replace(mathEndLetterPattern, "$1 $2");
-
-  // 11. Sửa lỗi in đậm thiếu dấu sao ở đầu: *chữ** -> **chữ** (tránh nuốt bullet point đứng trước)
-  formatted = formatted.replace(/(?<!\*)\*(?!\*)([^\*\s\n][^\*\n]*?)\*\*/g, '**$1**');
-  
-  // 12. Sửa lỗi in đậm thiếu dấu sao ở cuối: **chữ* -> **chữ**
-  formatted = formatted.replace(/\*\*([^\*\n]*?[^\*\s\n])(?<!\*)\*(?!\*)/g, '**$1**');
-  
-  // 13. Sửa khoảng trắng thừa sát dấu in đậm: ** chữ ** -> **chữ**
-  formatted = formatted.replace(/\*\*\s+(.*?)\s+\*\*/g, '**$1**');
-
-  // --- KHÔI PHỤC LẠI CÁC KHỐI ĐÃ ĐƯỢC BẢO VỆ ---
-  let prevFormatted;
-  do {
-    prevFormatted = formatted;
-    formatted = formatted.replace(/@@@PROTECTED_BLOCK_(\d+)@@@/g, (match, idStr) => {
-      return protectedBlocks[+idStr] ?? match;
-    });
-  } while (formatted !== prevFormatted);
-
-  // Restore original URLs as is (forceOriginal = true)
-  return restoreUrls(formatted, urls, true);
+  return formatted;
 }
 
 // Bộ lọc tối ưu hóa kiểm tra xem một cụm có thực sự là công thức toán học cần LaTeX không
 // hay chỉ là các con số đơn lẻ, ngày tháng, phần trăm hoặc ký tự thông thường vô lý.
 function isRealMathLaTeX(str: string): boolean {
-  const content = str.trim();
-  if (!content) return false;
-
-  // 1. Ngày tháng dạng DD/MM/YYYY hoặc DD-MM-YYYY hoặc MM/YYYY
-  const dateRegex = /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$|^\d{1,2}[/-]\d{2,4}$/;
-  if (dateRegex.test(content)) {
-    return false;
-  }
-
-  // Khử các ký hiệu escape phổ biến trước khi kiểm tra (ví dụ: \% thành %, \$ thành $)
-  const cleaned = content.replace(/\\%/g, "%").replace(/\\([$#&_])/g, "$1");
-
-  // 2. Chỉ từ chối số kèm đơn vị đo lường/tiền tệ (ví dụ: 50%, 10kg, 5m/s)
-  const numberPlusUnitRegex =
-    /^\d+(?:[.,]\d+)*\s*(?:%|đ|VND|VNĐ|USD|EUR|k|tr|m|cm|mm|kg|g|h|s|px)$/i;
-  if (numberPlusUnitRegex.test(cleaned)) {
-    return false;
-  }
-
-  // 3. Từ chối số thập phân (vì thường là văn bản thường, vd: 1.5, 2,5)
-  // Số nguyên thuần (0, 1, 2) vẫn sẽ được parse KaTeX bình thường
-  const decimalNumberRegex = /^\d+[.,]\d+$/;
-  if (decimalNumberRegex.test(cleaned)) {
-    return false;
-  }
-
-  // 3. Kiểm tra xem chuỗi có chứa chữ Tiếng Việt có dấu viết cách nhau hay không.
-  // Nếu có chứa tiếng Việt có dấu và đồng thời KHÔNG chứa các cú pháp toán thực sự của LaTeX (như backslash \, caret ^, subscript _, curly braces {})
-  // thì chắc chắn đây là đoạn văn bản chữ thuần chứ không phải LaTeX công thức.
-  // Ví dụ: "$Dòng tiền thuần = LNST + Khấu hao + Lãi vay$" có dấu tiếng Việt, không có "\", "^", "_", "{" nên sẽ là văn bản thường.
-  const vnAccentsPattern =
-    /[áàảãạăắằẳẵặâấầẩẫậéèẻẽẹêếềểễệíìỉĩịóòỏõọôốồổỗộơớờởỡợúùủũụưứừửữựýỳỷỹỵđĐ]/;
-  if (vnAccentsPattern.test(cleaned)) {
-    const hasLatexSyntax = /[\\[\]{}^_]/.test(cleaned);
-    if (!hasLatexSyntax) {
-      if (cleaned.length > 3 || cleaned.includes(" ")) {
-        return false;
-      }
-    }
-  }
-
-  // 4. Nếu chỉ toàn chữ cái thông thường (kể cả Tiếng Việt có dấu), khoảng trắng, không có bất kỳ ký hiệu toán học chuyên dụng nào
-  // Các ký hiệu toán học chuyên dụng cần LaTeX: \, ^, _, {, }, +, -, *, /, =, <, >, |, [ ] (trừ khoảng trắng)
-  const nonMathTextRegex =
-    /^[a-zA-ZĐĂÂÊÔƠƯáàảãạăắằẳẵặâấầẩẫậéèẻẽẹêếềểễệíìỉĩịóòỏõọôốồổỗộơớờởỡợúùủũụưứừửữựýỳỷỹỵ\s]+$/;
-  if (nonMathTextRegex.test(cleaned)) {
-    // Nếu là biến số đơn lẻ ngắn (như "x", "y", "a", "b", "c", "n") thì thường là biến toán học, vẫn giữ LaTeX.
-    // Nếu dài từ 3 ký tự trở lên HOẶC chứa khoảng trắng, thì đó hẳn là từ văn bản thông thường (ví dụ: "$bài toán$").
-    if (cleaned.length > 2 || cleaned.includes(" ")) {
-      return false;
-    }
-  }
-
-  return true;
+  // Always recognize inline math enclosed by $...$ as a math equation directly, with no error-correction blocks
+  return str.trim().length > 0;
 }
 
 // Normalize LaTeX helper inside mathematical formulas for MS Word rendering and KaTeX compatibility
 function normalizeLaTeX(latex: string, isInline: boolean = false): string {
-  let cleaned = latex;
-
-  // 1. Remove newlines or extra spaces if it's inline math to avoid layout breaks in MS Word/KaTeX
-  if (isInline) {
-    cleaned = cleaned.replace(/\s*[\r\n]+\s*/g, " ");
-  }
-
-  // 2. Replace Unicode multiplication symbol '×' with '\times' (Word and KaTeX friendly)
-  cleaned = cleaned.replace(/×/g, "\\times");
-
-  // 3. Ensure trigonometric and logarithmic functions are properly prefixed with backslash
-  // (e.g., sin, cos, tan, cot, log, ln, lim, max, min) without duplicating existing backslashes
-  cleaned = cleaned.replace(
-    /(\\)?\b(sin|cos|tan|cot|log|ln|lim|max|min)\b/g,
-    (match, backslash, func) => {
-      return backslash ? match : "\\" + func;
-    },
-  );
-
-  // Ensure consecutive double backslashes are normalized (avoiding double slashes like \\sin)
-  cleaned = cleaned.replace(/\\\\+/g, "\\\\");
-
-  // 4. Normalize right arrows to '\implies' or '\Rightarrow' which MS Word can render flawlessly
-  cleaned = cleaned.replace(/⟹|==>/g, "\\implies");
-  cleaned = cleaned.replace(/\\rightarrow/g, "\\to");
-  cleaned = cleaned.replace(/→|->/g, "\\to");
-
-  // 4. Fix accidental Markdown links inside \href, e.g., \href{[url](url)}{text} -> \href{url}{text}
-  cleaned = cleaned.replace(/\\href\{\[(.*?)\]\((.*?)\)\}/g, "\\href{$2}");
-
-  return cleaned;
+  // Do not perform automatic normalization/manipulation to preserve exact user latex formulas
+  return latex;
 }
 
 // Check for unclosed/unpaired dollar tags ($) in input text
@@ -613,6 +405,9 @@ export default function App() {
   const [feedbackRating, setFeedbackRating] = useState<number>(5);
   const [isSubmittingFeedback, setIsSubmittingFeedback] =
     useState<boolean>(false);
+  const [feedbackImage, setFeedbackImage] = useState<string>("");
+  const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
+  const [deletingFeedbackId, setDeletingFeedbackId] = useState<string | null>(null);
 
   // --- NOTIFICATION STATE ---
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -717,7 +512,92 @@ export default function App() {
   ).length;
 
   const [inputText, setInputText] = useState<string>("");
-  const [isFixingLogic, setIsFixingLogic] = useState<boolean>(false);
+  const [isCanvasMaximized, setIsCanvasMaximized] = useState<boolean>(false);
+
+  const insertAtCursor = (before: string, after: string = "") => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const currentVal = textarea.value;
+    const selectedText = currentVal.substring(start, end);
+
+    const replacement = before + (selectedText || after) + (selectedText ? after : "");
+    const newVal = currentVal.substring(0, start) + replacement + currentVal.substring(end);
+
+    setInputText(newVal);
+    
+    // Focus and select back
+    setTimeout(() => {
+      textarea.focus();
+      const cursorOffset = start + before.length + (selectedText ? selectedText.length + after.length : 0);
+      textarea.setSelectionRange(cursorOffset, cursorOffset);
+    }, 0);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const value = textarea.value;
+
+    const pairs: Record<string, string> = {
+      "$": "$",
+      "{": "}",
+      "[": "]",
+      "(": ")",
+      '"': '"',
+      "'": "'"
+    };
+
+    const char = e.key;
+    if (pairs[char] !== undefined) {
+      e.preventDefault();
+      const closeChar = pairs[char];
+      
+      // If there's selected text, wrap it
+      if (start !== end) {
+        const selected = value.substring(start, end);
+        const newVal = value.substring(0, start) + char + selected + closeChar + value.substring(end);
+        setInputText(newVal);
+        setTimeout(() => {
+          textarea.setSelectionRange(start + 1, end + 1);
+        }, 0);
+      } else {
+        // If no selected text, insert both and place cursor in middle
+        const newVal = value.substring(0, start) + char + closeChar + value.substring(end);
+        setInputText(newVal);
+        setTimeout(() => {
+          textarea.setSelectionRange(start + 1, start + 1);
+        }, 0);
+      }
+    } else if (char === "Backspace" && start === end && start > 0) {
+      // If backspace is pressed, and we have a matching pair right around the cursor, delete both!
+      const prevChar = value[start - 1];
+      const nextChar = value[start];
+      if (
+        (prevChar === "$" && nextChar === "$") ||
+        (prevChar === "{" && nextChar === "}") ||
+        (prevChar === "[" && nextChar === "]") ||
+        (prevChar === "(" && nextChar === ")") ||
+        (prevChar === '"' && nextChar === '"') ||
+        (prevChar === "'" && nextChar === "'")
+      ) {
+        e.preventDefault();
+        const newVal = value.substring(0, start - 1) + value.substring(start + 1);
+        setInputText(newVal);
+        setTimeout(() => {
+          textarea.setSelectionRange(start - 1, start - 1);
+        }, 0);
+      }
+    }
+  };
+  const [showAiCanvas, setShowAiCanvas] = useState<boolean>(false);
+  const [aiCanvasPrompt, setAiCanvasPrompt] = useState<string>("");
+  const [isProcessingCanvas, setIsProcessingCanvas] = useState<boolean>(false);
   const [smartNewline, setSmartNewline] = useState<boolean>(true);
   const [wordFont, setWordFont] = useState<string>(
     "'Times New Roman', Times, serif",
@@ -779,6 +659,8 @@ export default function App() {
   const [tuLuanAnswerText, setTuLuanAnswerText] = useState<string>("");
   const [showSmartPasteModal, setShowSmartPasteModal] = useState<boolean>(false);
   const [smartPasteText, setSmartPasteText] = useState<string>("");
+  const [smartPasteStep, setSmartPasteStep] = useState<1 | 2>(1);
+  const [parsedPreviewQuestions, setParsedPreviewQuestions] = useState<any[]>([]);
   const [docTitle, setDocTitle] = useState<string>(
     "ĐỀ KIỂM TRA ĐỊNH KỲ MÔN TOÁN SỐ HỌC & GIẢI TÍCH",
   );
@@ -807,6 +689,7 @@ export default function App() {
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(
     null,
   );
+  const [savedQuestionTab, setSavedQuestionTab] = useState<"all" | "trac_nghiem" | "trac_nghiem_dung_sai" | "trac_nghiem_tra_loi_ngan" | "tu_luan">("all");
 
   const tracNghiemList = docQuestions.filter((q) => q.type === "trac_nghiem");
   const dungSaiList = docQuestions.filter((q) => q.type === "trac_nghiem_dung_sai");
@@ -872,28 +755,31 @@ export default function App() {
 
   const handleAddQuestion = () => {
     let typeToUse = newQuestionType;
-    let questionText = "";
-    let answerText = "";
+    let questionTextRaw = "";
+    let answerTextRaw = "";
     let columns = newTracNghiemColumns;
 
     switch (typeToUse) {
       case "trac_nghiem":
-        questionText = tracNghiemText.trim();
-        answerText = tracNghiemAnswerText.trim();
+        questionTextRaw = tracNghiemText;
+        answerTextRaw = tracNghiemAnswerText;
         break;
       case "trac_nghiem_dung_sai":
-        questionText = dungSaiText.trim();
-        answerText = dungSaiAnswerText.trim();
+        questionTextRaw = dungSaiText;
+        answerTextRaw = dungSaiAnswerText;
         break;
       case "trac_nghiem_tra_loi_ngan":
-        questionText = traLoiNganText.trim();
-        answerText = traLoiNganAnswerText.trim();
+        questionTextRaw = traLoiNganText;
+        answerTextRaw = traLoiNganAnswerText;
         break;
       case "tu_luan":
-        questionText = tuLuanQuestionText.trim();
-        answerText = tuLuanAnswerText.trim();
+        questionTextRaw = tuLuanQuestionText;
+        answerTextRaw = tuLuanAnswerText;
         break;
     }
+
+    const questionText = getCleanQuestionBody(normalizeInputText(questionTextRaw));
+    const answerText = normalizeInputText(answerTextRaw).trim();
 
     if (!questionText) {
       triggerToast("Nội dung câu hỏi không được để trống!", false);
@@ -1028,6 +914,45 @@ export default function App() {
     triggerToast("Đã xóa câu hỏi.");
   };
 
+  const detectQuestionTypeFromBlockContent = (
+    qText: string,
+    fallbackType: "trac_nghiem" | "trac_nghiem_dung_sai" | "trac_nghiem_tra_loi_ngan" | "tu_luan"
+  ): "trac_nghiem" | "trac_nghiem_dung_sai" | "trac_nghiem_tra_loi_ngan" | "tu_luan" => {
+    const cleanText = qText.trim().toLowerCase();
+    
+    // Check for A., B., C., D. options (for Multiple Choice)
+    const hasA = /^[A-D][.\s\)-]/m.test(qText) || /(?:\s|^|\n)A[.\s\)-]/m.test(qText) || /a\.\s/i.test(qText);
+    const hasB = /^[A-D][.\s\)-]/m.test(qText) || /(?:\s|^|\n)B[.\s\)-]/m.test(qText) || /b\.\s/i.test(qText);
+    const hasC = /^[A-D][.\s\)-]/m.test(qText) || /(?:\s|^|\n)C[.\s\)-]/m.test(qText) || /c\.\s/i.test(qText);
+    const hasD = /^[A-D][.\s\)-]/m.test(qText) || /(?:\s|^|\n)D[.\s\)-]/m.test(qText) || /d\.\s/i.test(qText);
+    
+    // If we have at least A, B, C, D options, it's definitely trac_nghiem
+    if (hasA && hasB && hasC && hasD) {
+      return "trac_nghiem";
+    }
+
+    // Check for True/False (đúng sai): a) Đúng. b) Sai.
+    const hasDungSaiKeywords = cleanText.includes("đúng sai") || cleanText.includes("đúng/sai") || cleanText.includes("đúng hay sai") || cleanText.includes("mệnh đề sau");
+    const hasDungSaiOptions = /^[a-d][\s.\)\-]*\s*(?:đúng|sai)\b/mi.test(cleanText) || /[\s\n][a-d][\s.\)\-]*\s*(?:đúng|sai)\b/mi.test(cleanText);
+    if (hasDungSaiKeywords || hasDungSaiOptions) {
+      return "trac_nghiem_dung_sai";
+    }
+
+    // Check for short answer keywords
+    const hasShortAnswerKeywords = cleanText.includes("trả lời ngắn") || cleanText.includes("đáp số") || cleanText.includes("điền vào");
+    if (hasShortAnswerKeywords) {
+      return "trac_nghiem_tra_loi_ngan";
+    }
+
+    // If fallback is not tu_luan, we can respect fallback if it's not a clear essay
+    // But we should double check if fallback is trac_nghiem and we didn't find ABCD options, then maybe it's actually tu_luan
+    if (fallbackType === "trac_nghiem" && (!hasA || !hasB)) {
+      return "tu_luan";
+    }
+
+    return fallbackType;
+  };
+
   const processMultipleQuestionsText = (text: string) => {
     if (!text) return;
 
@@ -1054,11 +979,11 @@ export default function App() {
 
     // Fix logic bugs in markdown
     const fixMarkdown = (t: string) => {
-      let result = t.replace(/(^|\s)\*\s+\*(.*?)\*\*/g, '$1**$2**');
-      result = result.replace(/\*\s+\*\*/g, '***');
-      result = result.replace(/\*\*\s+\*/g, '***');
-      result = result.replace(/^#\s+#/gm, '##');
-      result = result.replace(/\*\s+\*(.*?)\*\s+\*/g, '**$1**');
+      let result = t.replace(/(^|[ \t])\*[ \t]+\*(.*?)\*\*/g, '$1**$2**');
+      result = result.replace(/\*[ \t]+\*\*/g, '***');
+      result = result.replace(/\*\*[ \t]+\*/g, '***');
+      result = result.replace(/^#[ \t]+#/gm, '##');
+      result = result.replace(/\*[ \t]+\*(.*?)\*[ \t]+\*/g, '**$1**');
       return result;
     };
 
@@ -1091,16 +1016,6 @@ export default function App() {
             }
         } else {
             currentBlock += line + '\n';
-        }
-
-        if (lowerLine.includes("nhiều lựa chọn") || lowerLine.includes("4 lựa chọn") || lowerLine.includes("chọn một phương án") || lowerLine.includes("phương án đúng") || lowerLine.includes("một đáp án")) {
-            currentTypeContext = "trac_nghiem";
-        } else if (lowerLine.includes("đúng/sai") || lowerLine.includes("đúng sai") || lowerLine.includes("đúng hay sai")) {
-            currentTypeContext = "trac_nghiem_dung_sai";
-        } else if (lowerLine.includes("trả lời ngắn")) {
-            currentTypeContext = "trac_nghiem_tra_loi_ngan";
-        } else if (lowerLine.includes("tự luận")) {
-            currentTypeContext = "tu_luan";
         }
     }
     if (currentBlock.trim()) blocks.push({ text: currentBlock, typeContext: currentTypeContext });
@@ -1140,9 +1055,12 @@ export default function App() {
             }
         }
         
+        const questionContent = qLines.join('\n').trim();
+        const detectedType = detectQuestionTypeFromBlockContent(questionContent, blockObj.typeContext);
+        
         return {
-           type: blockObj.typeContext,
-           q: qLines.join('\n').trim(),
+           type: detectedType,
+           q: questionContent,
            a: aLines.join('\n').trim()
         };
     });
@@ -1175,17 +1093,47 @@ export default function App() {
       return;
     }
     const currentPromptCount = userDoc?.promptCount || 0;
-    if (!isApproved && currentPromptCount >= 8) {
+    if (!isApproved && currentPromptCount >= 10) {
       triggerToast(
-        "Bạn đã đạt giới hạn 8 lần sử dụng tính năng dán thông minh (AI) mỗi ngày. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        "Bạn đã đạt giới hạn tính năng dán thông minh (AI) trong ngày (tối đa 10 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
         false,
       );
       return;
     }
-    processMultipleQuestionsText(smartPasteText);
-    incrementPromptCount();
+
+    if (smartPasteStep === 1) {
+      const previewList = parseMultipleQuestionsTextToPreview(smartPasteText);
+      if (previewList.length === 0) {
+        triggerToast("Không nhận diện được câu hỏi nào. Vui lòng kiểm tra lại định dạng!", false);
+        return;
+      }
+      setParsedPreviewQuestions(previewList);
+      setSmartPasteStep(2);
+      triggerToast("Đã phân tách thành công! Hãy xem trước kết quả bên dưới.", true);
+    } else {
+      if (parsedPreviewQuestions.length === 0) {
+        triggerToast("Không có câu hỏi nào để nhập!", false);
+        return;
+      }
+      setDocQuestions((prev) => {
+        const updated = [...prev, ...parsedPreviewQuestions];
+        return renumberQuestions(updated);
+      });
+      incrementPromptCount();
+      triggerToast(`Đã tự động thêm ${parsedPreviewQuestions.length} câu hỏi vào đề thi!`, true);
+      
+      // Reset state and close modal
+      setSmartPasteText("");
+      setParsedPreviewQuestions([]);
+      setSmartPasteStep(1);
+      setShowSmartPasteModal(false);
+    }
+  };
+
+  const closeSmartPasteModal = () => {
     setShowSmartPasteModal(false);
-    setSmartPasteText("");
+    setSmartPasteStep(1);
+    setParsedPreviewQuestions([]);
   };
 
   const copyDocToWord = async () => {
@@ -1195,9 +1143,9 @@ export default function App() {
     }
 
     const currentExamCount = userDoc?.examCount || 0;
-    if (!isApproved && currentExamCount >= 3) {
+    if (!isApproved && currentExamCount >= 5) {
       triggerToast(
-        "Bạn đã đạt giới hạn 3 lần tạo tài liệu đề thi. Vui lòng liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        "Bạn đã đạt giới hạn tính năng tạo tài liệu đề thi trong ngày (tối đa 5 lượt/ngày). Vui lòng liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
         false,
       );
       return;
@@ -1247,8 +1195,18 @@ export default function App() {
         table.doc-answer-table {
             margin-top: 16pt !important;
             margin-bottom: 12pt !important;
-            border: 1px solid #475569 !important;
-            background-color: transparent !important;
+            border: 1px solid #10b981 !important;
+            background-color: #ecfdf5 !important;
+        }
+        table.doc-answer-table th, table.doc-answer-table td {
+            border: none !important;
+            padding: 10pt !important;
+        }
+        table.doc-options-table, table.doc-options-table th, table.doc-options-table td {
+            border: none !important;
+        }
+        table.doc-header-table, table.doc-header-table th, table.doc-header-table td {
+            border: none !important;
         }
         table {
             border-collapse: collapse;
@@ -1327,9 +1285,9 @@ export default function App() {
     }
 
     const currentExamCount = userDoc?.examCount || 0;
-    if (!isApproved && currentExamCount >= 3) {
+    if (!isApproved && currentExamCount >= 5) {
       triggerToast(
-        "Bạn đã đạt giới hạn 3 lần tạo tài liệu đề thi. Vui lòng liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        "Bạn đã đạt giới hạn tính năng tạo tài liệu đề thi trong ngày (tối đa 5 lượt/ngày). Vui lòng liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
         false,
       );
       return;
@@ -1379,8 +1337,18 @@ export default function App() {
         table.doc-answer-table {
             margin-top: 16pt !important;
             margin-bottom: 12pt !important;
-            border: 1px solid #475569 !important;
-            background-color: transparent !important;
+            border: 1px solid #10b981 !important;
+            background-color: #ecfdf5 !important;
+        }
+        table.doc-answer-table th, table.doc-answer-table td {
+            border: none !important;
+            padding: 10pt !important;
+        }
+        table.doc-options-table, table.doc-options-table th, table.doc-options-table td {
+            border: none !important;
+        }
+        table.doc-header-table, table.doc-header-table th, table.doc-header-table td {
+            border: none !important;
         }
         table {
             border-collapse: collapse;
@@ -1418,45 +1386,244 @@ export default function App() {
     await incrementExamCount();
   };
 
+  const normalizeInputText = (text: string): string => {
+    if (!text) return "";
+    return text
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/^\uFEFF/, "")
+      .normalize("NFC")
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/\u2013/g, "--")
+      .replace(/\u2014/g, "---")
+      .replace(/\u2026/g, "...")
+      .replace(/\u00A0/g, " ")
+      .replace(/\u200B/g, "")
+      .replace(/\u200C/g, "");
+  };
+
+  const mergeAdjacentBoldBlocks = (text: string): string => {
+    if (!text) return "";
+    let merged = text;
+    let previous;
+    do {
+      previous = merged;
+      // Merge '**A** <math> **B**' into '**A <math> B**'
+      merged = merged.replace(/\*\*(.*?)\*\*([ \t]*)(\$[^\$]+\$|\\\(.*?\\\))([ \t]*)\*\*(.*?)\*\*/g, '**$1$2$3$4$5**');
+    } while (merged !== previous);
+    return merged;
+  };
+
   const getCleanQuestionBody = (text: string): string => {
     if (!text) return "";
-    let cleaned = text.trim();
+    let clean = mergeAdjacentBoldBlocks(normalizeInputText(text)).trim();
     
-    let prev;
-    do {
-      prev = cleaned;
-      // Strip leading bullets/symbols/spaces
-      cleaned = cleaned.replace(/^\s*[\-\*•\+\s]+\s*/, "").trim();
-      // Strip Câu/Bài/Câu hỏi optionally followed by digits/letters/parentheses/dots/colons/stars
-      cleaned = cleaned.replace(/^\s*(?:\*\s*\*|\*\*|\*)?\s*(?:Câu|Bài)\s*(?:hỏi)?\s*(?:\d+|[A-Z])?\s*(?:\([^)]+\))?\s*[:.\-|\*]*\s*(?:\*\*)?\s*/i, "").trim();
-      // Strip any punctuation/bullets at the start again
-      cleaned = cleaned.replace(/^\s*[:.\-|\*\s]+\s*/, "").trim();
-    } while (cleaned !== prev);
-
-    return cleaned;
+    // Clean any leading list bullets or punctuation that appear before the question prefix
+    const qMatch = clean.match(/(?:Câu|Bài)\s*(?:\d+|[IVXLCDM]+)\b/i);
+    if (qMatch && qMatch.index !== undefined) {
+      const idx = qMatch.index;
+      const prefix = clean.substring(0, idx);
+      // count number of * in prefix
+      const starCount = (prefix.match(/\*/g) || []).length;
+      // If there are stars, we want to keep them.
+      const newPrefix = "*".repeat(starCount);
+      clean = newPrefix + clean.substring(idx);
+    } else {
+      let preCleaned = true;
+      while (preCleaned) {
+        preCleaned = false;
+        if (clean.startsWith("**") && !clean.startsWith("***")) {
+          // It starts with a bold indicator, so don't strip
+          break;
+        }
+        
+        const firstChar = clean[0];
+        if (firstChar && "-+•–—o*›»■▪●:.~>".includes(firstChar)) {
+          if (firstChar === "*") {
+            if (/^\*\s+/.test(clean)) {
+              clean = clean.substring(1).trim();
+              preCleaned = true;
+            }
+          } else {
+            clean = clean.substring(1).trim();
+            preCleaned = true;
+          }
+        }
+      }
+    }
+    
+    let changed = true;
+    while (changed) {
+      changed = false;
+      
+      // Pattern 1: Bold prefix like **Câu 1:** or **Câu 1.** or **Câu 1**
+      const boldPrefixRegex = /^\s*\*\*\s*(?:Câu|Bài)\s*\d+\s*[:.\-]*\s*\*\*\s*(?:\s*\d+\s*[:.\-]\s*)?/i;
+      if (boldPrefixRegex.test(clean)) {
+        clean = clean.replace(boldPrefixRegex, "").trim();
+        changed = true;
+        continue;
+      }
+      
+      // Pattern 2: Normal prefix like Câu 1: or Câu 1. or Câu 1 - or Bài 1: or Câu 1: 1.
+      const normalPrefixRegex = /^\s*(?:Câu|Bài)\s*\d+\s*[:.\-]*\s*(?:\s*\d+\s*[:.\-]\s*)?/i;
+      if (normalPrefixRegex.test(clean)) {
+        clean = clean.replace(normalPrefixRegex, "").trim();
+        changed = true;
+        continue;
+      }
+      
+      // Pattern 3: Number prefix like 1. or 1: or 1-
+      const numberPrefixRegex = /^\s*\d+\s*[:.\-]\s*/;
+      if (numberPrefixRegex.test(clean)) {
+        clean = clean.replace(numberPrefixRegex, "").trim();
+        changed = true;
+        continue;
+      }
+      
+      // Pattern 4: Bold sentence starting with Câu X: inside bold, e.g. **Câu 1: Tìm cực đại**
+      const boldSentencePrefixRegex = /^\s*\*\*\s*(?:Câu|Bài)\s*\d+\s*[:.\-]\s*/i;
+      if (boldSentencePrefixRegex.test(clean)) {
+        clean = clean.replace(/^\s*\*\*\s*(?:Câu|Bài)\s*\d+\s*[:.\-]\s*/i, "**").trim();
+        changed = true;
+        continue;
+      }
+      
+      // Pattern 5: Bold sentence starting with number prefix inside bold, e.g. **1. Tìm cực đại**
+      const boldNumberPrefixRegex = /^\s*\*\*\s*\d+\s*[:.\-]\s*/i;
+      if (boldNumberPrefixRegex.test(clean)) {
+        clean = clean.replace(/^\s*\*\*\s*\d+\s*[:.\-]\s*/i, "**").trim();
+        changed = true;
+        continue;
+      }
+    }
+    
+    clean = clean.replace(/^\s*\*\*\s*\*\*\s*/, "").trim();
+    return clean;
   };
 
   const getCleanAnswerBody = (text: string): string => {
-    if (!text) return "";
-    let cleaned = text.trim();
+    return text ? text.trim() : "";
+  };
+
+  const hasQuestionPrefix = (text: string): boolean => {
+    if (!text) return false;
+    return /^\s*(?:[\-\*•\+]\s*)?(?:\**|\*)\s*(?:Câu|Bài)\s*\d+/i.test(text.trim());
+  };
+
+  const parseMultipleQuestionsTextToPreview = (text: string): any[] => {
+    if (!text) return [];
+
+    let normalizedInput = text
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/^\uFEFF/, "")
+      .normalize("NFC")
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/\u2013/g, "--")
+      .replace(/\u2014/g, "---")
+      .replace(/\u2026/g, "...")
+      .replace(/\u00A0/g, " ")
+      .replace(/\u200B/g, "")
+      .replace(/\u200C/g, "");
+
+    let convertedText = convertTabTableToMarkdown(normalizedInput);
+    let formattedText = applySmartFormatting(convertedText);
+
+    const fixMarkdown = (t: string) => {
+      let result = t.replace(/(^|[ \t])\*[ \t]+\*(.*?)\*\*/g, '$1**$2**');
+      result = result.replace(/\*[ \t]+\*\*/g, '***');
+      result = result.replace(/\*\*[ \t]+\*/g, '***');
+      result = result.replace(/^#[ \t]+#/gm, '##');
+      result = result.replace(/\*[ \t]+\*(.*?)\*[ \t]+\*/g, '**$1**');
+      return result;
+    };
+
+    const fixedText = fixMarkdown(formattedText);
+    const lines = fixedText.split('\n');
     
-    let prev;
-    do {
-      prev = cleaned;
-      // Strip leading bullets/stars/spaces
-      cleaned = cleaned.replace(/^\s*[\-\*•\+\s]+\s*/, "").trim();
-      
-      // Strip complex headers: Đáp án/Lời giải/Hướng dẫn giải/Giải thích/Lời giải chi tiết with optional '& Lời giải/Đáp án' and 'Câu 1:'
-      cleaned = cleaned.replace(/^\s*(?:\*\s*\*|\*\*|\*)?\s*(?:Đáp án|Lời giải|Hướng dẫn giải|Giải thích|Lời giải chi tiết)\s*(?:&\s*(?:Lời giải|Đáp án|Hướng dẫn giải))?\s*(?:Câu|Bài)?\s*(?:\d+)?\s*[:.\-|\*]*\s*(?:\*\*)?\s*/i, "").trim();
-      
-      // Strip "Đáp án đúng/Phương án đúng/Đáp án" with optional stars/colons
-      cleaned = cleaned.replace(/^\s*(?:\*\s*\*|\*\*|\*)?\s*(?:Đáp án đúng|Phương án đúng|Đáp án|Lời giải)\s*[:.\-|\*]*\s*(?:\*\*)?\s*/i, "").trim();
+    let blocks: {text: string, typeContext: "trac_nghiem" | "trac_nghiem_dung_sai" | "trac_nghiem_tra_loi_ngan" | "tu_luan"}[] = [];
+    let currentBlock = "";
+    let currentTypeContext = newQuestionType;
+    
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const lineTrimmed = line.trim();
+        const lowerLine = lineTrimmed.toLowerCase();
+        
+        const isTableLine = lineTrimmed.startsWith("|");
+        const isLaTeXCommand = lineTrimmed.startsWith("\\");
+        
+        const isNewQuestion = !isTableLine && !isLaTeXCommand && /^(?:[\-\*•\+]\s*)?(?:\*\s*\*|\*\*|\*)?\s*(?:Câu|Bài)\s*(?:hỏi)?\s*(?:\d+)?\s*(?:[:.\-|\*]|$)/i.test(lineTrimmed);
+        const isNewSection = /^Phần\s+\d+/i.test(lineTrimmed);
 
-      // Strip any leading punctuation/symbols left
-      cleaned = cleaned.replace(/^\s*[:.\-|\*\s]+\s*/, "").trim();
-    } while (cleaned !== prev);
-
-    return cleaned;
+        if (isNewQuestion || isNewSection) {
+            if (currentBlock.trim()) blocks.push({ text: currentBlock, typeContext: currentTypeContext });
+            
+            if (isNewSection) {
+                currentBlock = "";
+            } else {
+                currentBlock = line + '\n';
+            }
+        } else {
+            currentBlock += line + '\n';
+        }
+    }
+    if (currentBlock.trim()) blocks.push({ text: currentBlock, typeContext: currentTypeContext });
+    
+    blocks = blocks.filter(b => /^(?:[\-\*•\+]\s*)?(?:\*\s*\*|\*\*|\*)?\s*(?:Câu|Bài)/i.test(b.text.trim()));
+    
+    if (blocks.length === 0) {
+        blocks.push({ text: fixedText, typeContext: currentTypeContext });
+    }
+    
+    const parsedQuestions = blocks.map(blockObj => {
+        const block = blockObj.text;
+        let qLines: string[] = [];
+        let aLines: string[] = [];
+        let isAnswer = false;
+        
+        const blockLines = block.split('\n');
+        for (let i = 0; i < blockLines.length; i++) {
+            const lower = blockLines[i].toLowerCase().trim();
+            const plain = lower.replace(/\*/g, '').trim();
+            
+            if (
+                plain.startsWith('đáp án:') || 
+                plain.startsWith('đáp án') || 
+                plain.startsWith('hướng dẫn giải') || 
+                plain.startsWith('lời giải') || 
+                plain.startsWith('giải thích') ||
+                plain.match(/^--+$/)
+            ) {
+                isAnswer = true;
+            }
+            
+            if (isAnswer) {
+                aLines.push(blockLines[i]);
+            } else {
+                qLines.push(blockLines[i]);
+            }
+        }
+        
+        const questionContent = qLines.join('\n').trim();
+        const detectedType = detectQuestionTypeFromBlockContent(questionContent, blockObj.typeContext);
+        
+        return {
+           type: detectedType,
+           q: questionContent,
+           a: aLines.join('\n').trim()
+        };
+    });
+    
+    return parsedQuestions.map(item => ({
+        id: "q_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9),
+        type: item.type,
+        questionText: getCleanQuestionBody(item.q),
+        columns: item.type === "trac_nghiem" ? newTracNghiemColumns : undefined,
+        answerText: getCleanAnswerBody(item.a),
+    }));
   };
 
   const renumberQuestions = (questions: any[]) => {
@@ -1467,9 +1634,20 @@ export default function App() {
       tu_luan: 0
     };
     return questions.map((q) => {
-      const cleanContent = getCleanQuestionBody(q.questionText);
       counts[q.type] = (counts[q.type] || 0) + 1;
-      return { ...q, questionText: `Câu ${counts[q.type]}. ` + cleanContent };
+      const currentNum = counts[q.type];
+      const text = q.questionText || "";
+      
+      const prefixRegex = /^(\s*(?:[\-\*•\+]\s*)?)(\**|\*)\s*(Câu|Bài)\s*(\d+)\s*([:.\-]*\s*(?:\**|\*)\s*[:.\-]*|[:.\-]*)/i;
+      
+      if (prefixRegex.test(text)) {
+        const newText = text.replace(prefixRegex, (match, bullet, starsBefore, word, num, after) => {
+          return `${bullet || ""}${starsBefore || ""}${word} ${currentNum}${after || ""}`;
+        });
+        return { ...q, questionText: newText };
+      } else {
+        return { ...q, questionText: `Câu ${currentNum}. ` + text };
+      }
     });
   };
 
@@ -1661,12 +1839,6 @@ export default function App() {
       mdText = applySmartFormatting(mdText);
     }
 
-    // Standard Vietnamese cleanup space rules
-    mdText = mdText.replace(
-      /(?:[\s\u00a0\u200b]|&nbsp;)+([.,;:!?\)\}\]”’"`])/g,
-      "$1",
-    );
-
     // Restore URLs with linkification for bare ones just before passing to marked.parse
     mdText = restoreUrls(mdText, urls, false);
 
@@ -1682,14 +1854,6 @@ export default function App() {
     htmlContent = htmlContent.replace(
       /<a\s+href=/g,
       '<a target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline cursor-pointer font-medium" href=',
-    );
-
-    // Standard Vietnamese cleanup in HTML elements
-    htmlContent = htmlContent.replace(
-      /(<\/?[^>]+>)?(?:[\s\u00a0\u200b]|&nbsp;)+([.,;:!?\)\}\]”’"`])/g,
-      (match, tag, punc) => {
-        return (tag || "") + punc;
-      },
     );
 
   // Khôi phục công thức khối và loại bỏ thẻ <p> bao ngoài nếu đứng riêng lẻ
@@ -1801,7 +1965,7 @@ export default function App() {
                 displayName:
                   user.displayName || user.email?.split("@")[0] || "Người dùng",
                 role: targetRole,
-                status: "approved",
+                status: isOwner ? "approved" : "pending",
                 queryCount: 0,
                 latexCount: 0,
                 examCount: 0,
@@ -1868,7 +2032,7 @@ export default function App() {
             displayName:
               user.displayName || currentEmail.split("@")[0] || "Người dùng",
             role: targetRole,
-            status: "approved",
+            status: isOwner ? "approved" : "pending",
             queryCount: 0,
             latexCount: 0,
             examCount: 0,
@@ -1898,7 +2062,7 @@ export default function App() {
           email: currentEmail,
           displayName: user.displayName || "Người dùng",
           role: isOwner ? "admin" : "user",
-          status: "approved",
+          status: isOwner ? "approved" : "pending",
           queryCount: 0,
           latexCount: 0,
           examCount: 0,
@@ -2209,13 +2373,15 @@ export default function App() {
         feedbackText: feedbackText.trim(),
         type: feedbackType,
         rating: feedbackRating,
+        feedbackImage: feedbackImage || "",
         createdAt: new Date().toISOString(),
-        version: "v3.4",
+        version: "v3.6",
       });
       triggerToast("Cám ơn bạn đã gửi ý kiến đóng góp!", true);
       setFeedbackText("");
       setFeedbackRating(5);
       setFeedbackType("suggestion");
+      setFeedbackImage("");
       setIsFeedbackOpen(false);
     } catch (err) {
       console.error("Lỗi gửi phản hồi:", err);
@@ -2810,12 +2976,6 @@ ${cleanedBody}
       mdText = applySmartFormatting(mdText);
     }
 
-    // Standard Vietnamese cleanup space rules
-    mdText = mdText.replace(
-      /(?:[\s\u00a0\u200b]|&nbsp;)+([.,;:!?\)\}\]”’"`])/g,
-      "$1",
-    );
-
     // Restore URLs with linkification for bare ones just before passing to marked.parse
     mdText = restoreUrls(mdText, urls, false);
 
@@ -2831,14 +2991,6 @@ ${cleanedBody}
     htmlContent = htmlContent.replace(
       /<a\s+href=/g,
       '<a target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline cursor-pointer font-medium" href=',
-    );
-
-    // Standard Vietnamese cleanup in HTML elements
-    htmlContent = htmlContent.replace(
-      /(<\/?[^>]+>)?(?:[\s\u00a0\u200b]|&nbsp;)+([.,;:!?\)\}\]”’"`])/g,
-      (match, tag, punc) => {
-        return (tag || "") + punc;
-      },
     );
 
   // Khôi phục công thức khối và loại bỏ thẻ <p> bao ngoài nếu đứng riêng lẻ
@@ -2887,9 +3039,9 @@ ${cleanedBody}
       return;
     }
     const currentLatexCount = userDoc?.latexCount || 0;
-    if (!isApproved && currentLatexCount >= 25) {
+    if (!isApproved && currentLatexCount >= 30) {
       triggerToast(
-        "Bạn đã đạt giới hạn 25 lượt chuyển đổi LaTeX mỗi ngày. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        "Bạn đã đạt giới hạn tính năng chuyển đổi LaTeX trong ngày (tối đa 30 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
         false,
       );
       return;
@@ -3004,9 +3156,9 @@ ${cleanedBody}
     // Nếu có từ 2 câu trở lên, chạy tính năng "Dán thông minh" ẩn danh (nếu không bypass)
     if (!bypassAutoProcess && cauCount >= 2) {
       const currentPromptCount = userDoc?.promptCount || 0;
-      if (!isApproved && currentPromptCount >= 8) {
+      if (!isApproved && currentPromptCount >= 10) {
         triggerToast(
-          "Bạn đã đạt giới hạn 8 lần sử dụng tính năng dán thông minh (AI) mỗi ngày. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+          "Bạn đã đạt giới hạn tính năng dán thông minh (AI) trong ngày (tối đa 10 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
           false,
         );
         return;
@@ -3059,9 +3211,9 @@ ${cleanedBody}
     }
 
     const currentLatexCount = userDoc?.latexCount || 0;
-    if (!isApproved && currentLatexCount >= 25) {
+    if (!isApproved && currentLatexCount >= 30) {
       triggerToast(
-        "Bạn đã đạt giới hạn 25 lượt chuyển đổi LaTeX mỗi ngày. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        "Bạn đã đạt giới hạn tính năng chuyển đổi LaTeX trong ngày (tối đa 30 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
         false,
       );
       return;
@@ -3098,9 +3250,9 @@ ${cleanedBody}
     }
 
     const currentLatexCount = userDoc?.latexCount || 0;
-    if (!isApproved && currentLatexCount >= 25) {
+    if (!isApproved && currentLatexCount >= 30) {
       triggerToast(
-        "Bạn đã đạt giới hạn 25 lượt tải tài liệu mỗi ngày. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        "Bạn đã đạt giới hạn tính năng tải tài liệu trong ngày (tối đa 30 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
         false,
       );
       return;
@@ -3479,7 +3631,7 @@ ${bodyHtml}
         }
 
         const tdWidth = Math.floor(100 / columns) + "%";
-        let tableHtml = `<table border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; margin-top: 0; margin-bottom: 0;">`;
+        let tableHtml = `<table class="doc-options-table" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; margin-top: 0; margin-bottom: 0; border: none !important;">`;
         for (const row of rows) {
           tableHtml += `<tr>`;
           for (let c = 0; c < columns; c++) {
@@ -3516,11 +3668,11 @@ ${bodyHtml}
                 )
                 .replace(/<\/div>/gi, "</span>");
 
-              tableHtml += `<td valign="top" style="width: ${tdWidth}; padding: 3pt 6pt 3pt 0; font-family: ${wordFont}; font-size: 13pt; line-height: 1.15; margin: 0;">`;
+              tableHtml += `<td valign="top" style="width: ${tdWidth}; padding: 3pt 6pt 3pt 0; font-family: ${wordFont}; font-size: 13pt; line-height: 1.15; margin: 0; border: none !important;">`;
               tableHtml += `<strong style="color: #4f46e5; margin-right: 4pt; font-size: 13pt;">${opt.label}.</strong> ${cleanTextHtml}`;
               tableHtml += `</td>`;
             } else {
-              tableHtml += `<td style="width: ${tdWidth}; padding: 3pt 6pt 3pt 0; margin: 0;"></td>`;
+              tableHtml += `<td style="width: ${tdWidth}; padding: 3pt 6pt 3pt 0; margin: 0; border: none !important;"></td>`;
             }
           }
           tableHtml += `</tr>`;
@@ -3549,13 +3701,13 @@ ${bodyHtml}
       const bodyHtml = bodyEl ? bodyEl.innerHTML : "";
 
       const tableHtml = `
-        <table class="doc-answer-table" border="1" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; border: 1px solid #475569; margin-top: 16pt; margin-bottom: 12pt; background-color: transparent; margin-left: 20pt;">
+        <table class="doc-answer-table" border="1" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; border: 1px solid #10b981; margin-top: 16pt; margin-bottom: 12pt; background-color: #ecfdf5; margin-left: 20pt;">
           <tr>
-            <td style="padding: 10pt; border: none; font-family: ${wordFont}; margin: 0;">
-              <span style="font-family: ${wordFont}; font-size: 13pt; font-weight: bold; color: #1e293b; margin-bottom: 4pt; letter-spacing: 0.05em; text-transform: uppercase; display: block; line-height: 1.15;">
+            <td style="padding: 10pt; border: none !important; font-family: ${wordFont}; margin: 0; background-color: #ecfdf5;">
+              <span style="font-family: ${wordFont}; font-size: 13pt; font-weight: bold; color: #047857; margin-bottom: 4pt; letter-spacing: 0.05em; text-transform: uppercase; display: block; line-height: 1.15;">
                 ${titleText}
               </span>
-              <div style="font-family: ${wordFont}; font-size: 13pt; color: #374151; margin: 0; line-height: 1.15;">
+              <div style="font-family: ${wordFont}; font-size: 13pt; color: #065f46; margin: 0; line-height: 1.15;">
                 ${bodyHtml}
               </div>
             </td>
@@ -3732,9 +3884,9 @@ ${bodyHtml}
     }
 
     const currentLatexCount = userDoc?.latexCount || 0;
-    if (!isApproved && currentLatexCount >= 25) {
+    if (!isApproved && currentLatexCount >= 30) {
       triggerToast(
-        "Bạn đã đạt giới hạn 25 lượt chuyển đổi LaTeX mỗi ngày. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        "Bạn đã đạt giới hạn tính năng chuyển đổi LaTeX trong ngày (tối đa 30 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
         false,
       );
       return;
@@ -3787,6 +3939,16 @@ ${bodyHtml}
             margin-bottom: 12pt !important;
             border: 1px solid #10b981 !important;
             background-color: #ecfdf5 !important;
+        }
+        table.doc-answer-table th, table.doc-answer-table td {
+            border: none !important;
+            padding: 10pt !important;
+        }
+        table.doc-options-table, table.doc-options-table th, table.doc-options-table td {
+            border: none !important;
+        }
+        table.doc-header-table, table.doc-header-table th, table.doc-header-table td {
+            border: none !important;
         }
         table {
             border-collapse: collapse;
@@ -3867,9 +4029,9 @@ ${bodyHtml}
     }
 
     const currentLatexCount = userDoc?.latexCount || 0;
-    if (!isApproved && currentLatexCount >= 25) {
+    if (!isApproved && currentLatexCount >= 30) {
       triggerToast(
-        "Bạn đã đạt giới hạn 25 lượt chuyển đổi LaTeX mỗi ngày. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        "Bạn đã đạt giới hạn tính năng chuyển đổi LaTeX trong ngày (tối đa 30 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
         false,
       );
       return;
@@ -3923,6 +4085,16 @@ ${bodyHtml}
             border: 1px solid #10b981 !important;
             background-color: #ecfdf5 !important;
         }
+        table.doc-answer-table th, table.doc-answer-table td {
+            border: none !important;
+            padding: 10pt !important;
+        }
+        table.doc-options-table, table.doc-options-table th, table.doc-options-table td {
+            border: none !important;
+        }
+        table.doc-header-table, table.doc-header-table th, table.doc-header-table td {
+            border: none !important;
+        }
         table {
             border-collapse: collapse;
             width: 100%;
@@ -3960,11 +4132,26 @@ ${bodyHtml}
     await incrementLatexCount();
   };
 
-  const handleFixLogic = async () => {
+  const handleCallAiCanvas = async (customPrompt?: string) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
 
-    if (isFixingLogic) return;
+    if (isProcessingCanvas) return;
+
+    const promptToSend = customPrompt || aiCanvasPrompt;
+    if (!promptToSend.trim()) {
+      triggerToast("Vui lòng nhập hoặc chọn yêu cầu cho Trợ lý AI Canvas!", false);
+      return;
+    }
+
+    const currentPromptCount = userDoc?.promptCount || 0;
+    if (!isApproved && currentPromptCount >= 10) {
+      triggerToast(
+        "Bạn đã đạt giới hạn tính năng Trợ lý AI Canvas trong ngày (tối đa 10 lượt/ngày). Hãy liên hệ Admin qua email giathieu110406@gmail.com để được cấp quyền không giới hạn!",
+        false,
+      );
+      return;
+    }
 
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
@@ -3972,83 +4159,55 @@ ${bodyHtml}
     
     const textToProcess = isSelected ? inputText.substring(start, end) : inputText;
 
-    if (!textToProcess.trim()) {
-      triggerToast("Vui lòng nhập hoặc bôi đen văn bản cần sửa logic!", false);
-      return;
-    }
-
-    const currentPromptCount = userDoc?.promptCount || 0;
-    if (!isApproved && currentPromptCount >= 8) {
-      triggerToast(
-        "Bạn đã đạt giới hạn 8 lượt sử dụng AI sửa logic mỗi ngày. Hãy liên hệ Admin qua email giathieu110406@gmail.com để được nâng cấp không giới hạn!",
-        false,
-      );
-      return;
-    }
-
-    triggerToast("Bộ não AI đang chuẩn hóa định dạng, công thức toán và khôi phục bảng biểu...", true);
-    setIsFixingLogic(true);
+    triggerToast("Trợ lý AI Canvas đang thực hiện yêu cầu của bạn...", true);
+    setIsProcessingCanvas(true);
 
     try {
-      const res = await fetch("/api/fix-logic", {
+      const res = await fetch("/api/gemini-canvas", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ text: textToProcess }),
+        body: JSON.stringify({
+          text: textToProcess,
+          prompt: promptToSend,
+        }),
       });
 
       if (!res.ok) {
-        throw new Error("Không thể kết nối đến máy chủ AI");
+        throw new Error("Không thể kết nối đến Trợ lý AI Canvas");
       }
 
       const data = await res.json();
       if (data.success && data.fixedText) {
-        const fixedText = data.fixedText;
+        const resultText = data.fixedText;
         if (isSelected) {
-          const newText = inputText.substring(0, start) + fixedText + inputText.substring(end);
+          const newText = inputText.substring(0, start) + resultText + inputText.substring(end);
           setInputText(newText);
           setTimeout(() => {
-            textarea.setSelectionRange(start, start + fixedText.length);
+            textarea.setSelectionRange(start, start + resultText.length);
             textarea.focus();
           }, 0);
-          triggerToast("Đã tối ưu hóa định dạng vùng chọn thành công!", true);
+          triggerToast("Trợ lý AI đã cập nhật vùng chọn trên Canvas!", true);
         } else {
-          setInputText(fixedText);
-          triggerToast("Đã tối ưu hóa trình bày toàn bộ văn bản bằng AI!", true);
+          setInputText(resultText);
+          triggerToast("Trợ lý AI đã cập nhật toàn bộ Canvas!", true);
         }
+        
+        // Clear the prompt input if it was submitted manually
+        if (!customPrompt) {
+          setAiCanvasPrompt("");
+        }
+        
         await incrementPromptCount();
       } else {
-        throw new Error(data.error || "Lỗi phản hồi từ AI");
+        throw new Error(data.error || "Lỗi phản hồi từ AI Canvas");
       }
     } catch (err: any) {
-      console.error("Lỗi khi sửa logic:", err);
-      // Fallback to local regex-based logic
-      let fallbackText = textToProcess;
-         // Sửa lỗi gõ thiếu dấu sao cho in đậm dạng *chữ** -> **chữ** (tránh nuốt bullet point bằng cách loại trừ dấu * đứng trước và dấu * ngay sau đó)
-      fallbackText = fallbackText.replace(/(?<!\*)\*(?!\*)([^\*\s\n][^\*\n]*?)\*\*/g, '**$1**');
-      // Sửa lỗi gõ thiếu dấu sao cho in đậm dạng **chữ* -> **chữ**
-      fallbackText = fallbackText.replace(/\*\*([^\*\n]*?[^\*\s\n])(?<!\*)\*(?!\*)/g, '**$1**');
-      fallbackText = fallbackText.replace(/\*\s+\*\*/g, '***');
-      fallbackText = fallbackText.replace(/\*\*\s+\*/g, '***');
-      fallbackText = fallbackText.replace(/^#\s+#/gm, '##');
-       // Sửa lỗi dấu hoa thị bị cách bởi khoảng trắng trong in đậm
-      fallbackText = fallbackText.replace(/\*\*\s+(.*?)\s+\*\*/g, '**$1**');
-      
-      if (isSelected) {
-        const newText = inputText.substring(0, start) + fallbackText + inputText.substring(end);
-        setInputText(newText);
-        setTimeout(() => {
-          textarea.setSelectionRange(start, start + fallbackText.length);
-          textarea.focus();
-        }, 0);
-        triggerToast("Gặp sự cố kết nối AI. Đã áp dụng sửa lỗi cục bộ!", false);
-      } else {
-        setInputText(fallbackText);
-        triggerToast("Gặp sự cố kết nối AI. Đã áp dụng sửa lỗi cục bộ!", false);
-      }
+      console.error("Lỗi trợ lý AI Canvas:", err);
+      triggerToast(err.message || "Gặp sự cố kết nối Trợ lý AI Canvas. Vui lòng thử lại!", false);
     } finally {
-      setIsFixingLogic(false);
+      setIsProcessingCanvas(false);
     }
   };
 
@@ -4543,9 +4702,9 @@ ${bodyHtml}
                                 ) : (
                                   <>
                                     <div className="flex flex-col gap-1">
-                                      <span>Mã LaTeX: <strong>{u.latexCount || 0} / 25</strong></span>
-                                      <span>Đề thi: <strong>{u.examCount || 0} / 3</strong></span>
-                                      <span>Dán AI: <strong>{u.promptCount || 0} / 8</strong></span>
+                                      <span>Mã LaTeX: <strong>{u.latexCount || 0} / 30</strong></span>
+                                      <span>Đề thi: <strong>{u.examCount || 0} / 5</strong></span>
+                                      <span>Dán AI: <strong>{u.promptCount || 0} / 10</strong></span>
                                     </div>
                                     <div className="text-slate-400 font-normal mt-1">Tổng yêu cầu: {u.queryCount || 0}</div>
                                   </>
@@ -4639,7 +4798,7 @@ ${bodyHtml}
                       const ratingStars = Array(5).fill(0).map((_, i) => i < (fb.rating || 5));
                       return (
                         <div key={fb.id} className="bg-slate-50 border border-slate-200/70 rounded-2xl p-5 relative transition-all hover:bg-slate-100/30">
-                          <div className="flex flex-wrap items-start md:items-center justify-between gap-3 mb-3">
+                          <div className="flex flex-wrap items-start md:items-center justify-between gap-3 mb-3 pr-24 sm:pr-28">
                             <div className="flex flex-wrap items-center gap-2 break-all">
                               <span className="font-extrabold text-slate-800 text-sm">{fb.displayName || "Người dùng ẩn danh"}</span>
                               <span className="text-xs text-slate-400 break-all w-full sm:w-auto">• {fb.email}</span>
@@ -4671,6 +4830,25 @@ ${bodyHtml}
                           <div className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap bg-white border border-slate-100 rounded-xl p-4 shadow-2xs mb-4">
                             {fb.feedbackText}
                           </div>
+
+                          {fb.feedbackImage && (
+                            <div className="mb-4">
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                                🖼️ Hình ảnh đính kèm:
+                              </span>
+                              <div className="relative group max-w-xs rounded-xl overflow-hidden border border-slate-200 bg-slate-100 shadow-2xs">
+                                <img
+                                  src={fb.feedbackImage}
+                                  alt="Hình ảnh đính kèm"
+                                  className="w-full h-auto max-h-60 object-cover cursor-zoom-in group-hover:scale-[1.02] transition-transform duration-300"
+                                  onClick={() => setPreviewImageSrc(fb.feedbackImage)}
+                                />
+                                <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/10 transition-colors pointer-events-none flex items-center justify-center">
+                                  <ZoomIn className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-sm" />
+                                </div>
+                              </div>
+                            </div>
+                          )}
 
                           {/* Admin Reply area */}
                           {fb.replyText ? (
@@ -4723,14 +4901,40 @@ ${bodyHtml}
                           )}
 
                           {/* Delete Feedback Option */}
-                          <div className="absolute top-4 right-4 flex items-center">
-                            <button
-                              onClick={() => handleDeleteFeedback(fb.id)}
-                              className="text-xs text-rose-500 hover:text-rose-700 hover:bg-rose-50 font-semibold cursor-pointer p-1.5 rounded-lg transition-colors"
-                              title="Xóa góp ý này"
-                            >
-                              Xóa Góp Ý
-                            </button>
+                          <div className="absolute top-4 right-4 flex items-center gap-1.5 bg-white/90 rounded-xl p-1 shadow-xs border border-slate-200">
+                            {deletingFeedbackId === fb.id ? (
+                              <>
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      await deleteDoc(doc(db, "feedbacks", fb.id));
+                                      triggerToast("Xóa phản hồi thành công.");
+                                    } catch (e) {
+                                      triggerToast("Lỗi khi xóa phản hồi.", false);
+                                    } finally {
+                                      setDeletingFeedbackId(null);
+                                    }
+                                  }}
+                                  className="text-[10px] bg-rose-650 hover:bg-rose-700 text-white font-bold px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  Xác nhận
+                                </button>
+                                <button
+                                  onClick={() => setDeletingFeedbackId(null)}
+                                  className="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  Hủy
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() => setDeletingFeedbackId(fb.id)}
+                                className="text-xs text-rose-500 hover:text-rose-700 hover:bg-rose-50 font-semibold cursor-pointer p-1.5 rounded-lg transition-colors"
+                                title="Xóa góp ý này"
+                              >
+                                Xóa Góp Ý
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -4898,18 +5102,17 @@ ${bodyHtml}
                       </span>
                       <div className="flex gap-1 md:gap-2">
                         <button
-                          onClick={handleFixLogic}
-                          disabled={isFixingLogic}
-                          className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-200/60 hover:bg-indigo-100 hover:border-indigo-300 disabled:opacity-60 disabled:bg-slate-50 disabled:border-slate-200 disabled:text-slate-400 font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-2xs group relative overflow-hidden"
-                          title="Sử dụng bộ não AI để chuẩn hóa định dạng, khôi phục bảng biểu và sửa lỗi LaTeX"
+                          type="button"
+                          onClick={() => setShowAiCanvas(!showAiCanvas)}
+                          className={`text-xs font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-2xs group relative overflow-hidden ${
+                            showAiCanvas
+                              ? "bg-indigo-600 text-white border border-indigo-700 hover:bg-indigo-700"
+                              : "text-indigo-700 bg-indigo-50 border border-indigo-200/60 hover:bg-indigo-100 hover:border-indigo-300"
+                          }`}
+                          title="Gọi Trợ lý AI Canvas để sửa đổi, giải chi tiết, dịch thuật hoặc tạo câu hỏi tương tự"
                         >
-                          <div className="absolute inset-0 bg-gradient-to-r from-violet-400/0 via-violet-400/10 to-indigo-400/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700"></div>
-                          {isFixingLogic ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />
-                          ) : (
-                            <Sparkles className="h-3.5 w-3.5 text-indigo-500 group-hover:text-indigo-600 group-hover:animate-pulse" />
-                          )}
-                          <span className="relative z-10">{isFixingLogic ? "Đang xử lý AI..." : "AI Sửa lỗi Trình bày"}</span>
+                          <Sparkles className={`h-3.5 w-3.5 ${showAiCanvas ? "text-white animate-pulse" : "text-indigo-500 group-hover:text-indigo-600 group-hover:animate-pulse"}`} />
+                          <span className="relative z-10">Trợ lý AI Canvas</span>
                         </button>
                         <button
                           onClick={handleClear}
@@ -4951,18 +5154,76 @@ ${bodyHtml}
                       value={inputText}
                       onChange={(e) => setInputText(e.target.value)}
                       onPaste={handlePasteChange}
-                      disabled={isFixingLogic}
-                      className={`flex-1 w-full p-4 md:p-5 resize-none overflow-y-auto border-0 focus:ring-0 focus:outline-none text-slate-700 leading-relaxed text-sm md:text-base font-normal placeholder:text-slate-400 bg-linear-to-b from-white to-slate-50/20 ${isFixingLogic ? 'opacity-50 cursor-not-allowed' : 'opacity-100'} transition-opacity duration-300`}
+                      disabled={isProcessingCanvas}
+                      className={`flex-1 w-full p-4 md:p-5 resize-none overflow-y-auto border-0 focus:ring-0 focus:outline-none text-slate-700 leading-relaxed text-sm md:text-base font-normal placeholder:text-slate-400 bg-linear-to-b from-white to-slate-50/20 ${isProcessingCanvas ? 'opacity-50 cursor-not-allowed' : 'opacity-100'} transition-opacity duration-300`}
                       placeholder="Nhập hoặc bôi đen copy cuộc trò chuyện chứa công thức toán ($x^2$ hoặc $$y = mx+b$$) từ ChatGPT, Gemini rồi dán trực tiếp vào đây..."
                     />
+
+                    {/* AI Canvas Panel */}
+                    {showAiCanvas && (
+                      <div className="border-t border-slate-100 bg-slate-50/50 p-4 shrink-0 flex flex-col gap-3">
+                        <div className="flex items-center gap-1.5 text-indigo-900 font-semibold text-xs md:text-sm">
+                          <Sparkles className="h-4 w-4 text-indigo-500 animate-pulse" />
+                          <span>Trợ lý AI Canvas</span>
+                        </div>
+                        
+                        {/* Preset quick action tags */}
+                        <div className="flex flex-wrap gap-2">
+                          {[
+                            { label: "Dịch sang tiếng Anh", prompt: "Dịch toàn bộ văn bản sang tiếng Anh, giữ nguyên các công thức LaTeX dạng $...$ hoặc $$...$$." },
+                            { label: "Thêm lời giải chi tiết", prompt: "Hãy bổ sung lời giải thích chi tiết từng bước cho các công thức, các bài tập trong văn bản này." },
+                            { label: "In đậm từ khóa", prompt: "Hãy tìm các thuật ngữ chuyên ngành, định lý, định luật hoặc từ khóa chính trong văn bản và in đậm chúng bằng dấu **." },
+                            { label: "Tạo câu hỏi tương tự", prompt: "Dựa trên nội dung hiện tại, hãy tạo thêm một câu hỏi toán học/bài tập tương tự đi kèm đáp án và lời giải chi tiết." }
+                          ].map((tag) => (
+                            <button
+                              key={tag.label}
+                              type="button"
+                              onClick={() => handleCallAiCanvas(tag.prompt)}
+                              disabled={isProcessingCanvas}
+                              className="text-xs font-medium text-slate-600 bg-white border border-slate-200 hover:border-indigo-300 hover:text-indigo-600 px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap shadow-2xs hover:shadow-xs active:scale-95 disabled:opacity-50"
+                            >
+                              {tag.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Prompt Input Box */}
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            handleCallAiCanvas();
+                          }}
+                          className="relative flex items-center bg-white border border-slate-200 focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 rounded-xl transition-all shadow-2xs"
+                        >
+                          <input
+                            type="text"
+                            value={aiCanvasPrompt}
+                            onChange={(e) => setAiCanvasPrompt(e.target.value)}
+                            disabled={isProcessingCanvas}
+                            placeholder="Yêu cầu AI sửa Canvas (ví dụ: 'Thêm lời giải', 'Sửa câu 1'...)"
+                            className="w-full pl-4 pr-12 py-3 text-xs md:text-sm bg-transparent outline-none border-none text-slate-700 placeholder:text-slate-400 focus:ring-0 focus:outline-none"
+                          />
+                          <button
+                            type="submit"
+                            disabled={isProcessingCanvas || !aiCanvasPrompt.trim()}
+                            className="absolute right-2 p-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 text-white disabled:text-slate-400 rounded-lg transition-all cursor-pointer flex items-center justify-center shadow-xs active:scale-95"
+                          >
+                            {isProcessingCanvas ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <ArrowRight className="h-4 w-4" />
+                            )}
+                          </button>
+                        </form>
+                      </div>
+                    )}
 
                     <div className="px-4 py-2 md:px-5 md:py-2.5 bg-slate-50/70 border-t border-slate-100 text-[10px] md:text-xs text-slate-500 font-medium flex justify-between items-center">
                       <span>
                         Độ dài ký tự: <strong>{inputText.length}</strong>
                       </span>
-                      <span className="italic hidden sm:inline">
-                        Dán (Ctrl+V) có định dạng từ trình duyệt để kích hoạt bộ
-                        lọc
+                      <span className="italic text-slate-400 font-normal">
+                        Canvas đồng bộ trực tiếp khi sửa đổi
                       </span>
                     </div>
                   </div>
@@ -5350,9 +5611,22 @@ ${bodyHtml}
 
                       {/* Selector */}
                       <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                          Phân loại câu hỏi mới
-                        </label>
+                        <div className="flex justify-between items-center gap-2">
+                          <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                            Phân loại câu hỏi mới
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setShowSmartPasteModal(true)}
+                            className="bg-emerald-100 hover:bg-emerald-200 text-emerald-700 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                            title="Dán câu hỏi và đáp án từ AI để tự động phân tách"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                            Dán thông minh (AI)
+                          </button>
+                        </div>
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 bg-slate-100/80 p-1 rounded-xl">
                           <button
                             type="button"
@@ -5405,25 +5679,11 @@ ${bodyHtml}
                       {newQuestionType === "trac_nghiem" ? (
                         /* TWO SIDE-BY-SIDE INPUT FRAMES for multiple choice queries */
                         <div className="space-y-3">
-                          <div className="flex justify-between items-center mb-1">
+                          <div className="mb-1">
                             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
                               Khung nhập câu hỏi trắc nghiệm
                               <span className="text-rose-500 font-bold">*</span>
                             </label>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setShowSmartPasteModal(true)}
-                                className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-2.5 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1"
-                                title="Dán câu hỏi và đáp án từ AI để tự động phân tách"
-                              >
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-                                Dán thông minh (AI)
-                              </button>
-                              <span className="text-[10px] text-slate-400 italic hidden md:inline-block">
-                                Đáp án trắc nghiệm có thể bỏ trống
-                              </span>
-                            </div>
                           </div>
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -5445,61 +5705,6 @@ ${bodyHtml}
                                 placeholder="VD: Cho hàm số $y=x+1$, tìm điểm giao với trục hoành.\nA. $(1;0)$\nB. $(-1;0)$\nC. $(0;1)$\nD. $(0;-1)$"
                                 className="w-full bg-slate-50/40 border border-slate-200 rounded-xl p-3 text-xs md:text-sm text-slate-800 focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white outline-none font-normal leading-relaxed overflow-y-auto"
                               />
-                              {tracNghiemText.trim() && (
-                                <div className="mt-1.5 p-3 rounded-xl bg-slate-50/40 border border-dashed border-slate-200 text-xs text-slate-800 max-h-[220px] overflow-y-auto">
-                                  <span className="text-[10px] font-bold text-indigo-650 uppercase tracking-wider block mb-1.5 select-none flex items-center gap-1">
-                                    <span>👁️</span> Xem trước câu hỏi & phương
-                                    án:
-                                  </span>
-                                  <div className="space-y-2 select-text">
-                                    {(() => {
-                                      const parsed =
-                                        parseMultipleChoice(tracNghiemText);
-                                      const cleanBody = getCleanQuestionBody(
-                                        parsed.questionBody,
-                                      );
-                                      return (
-                                        <>
-                                          <div
-                                            className="preview-content font-normal text-left whitespace-normal break-words overflow-x-auto"
-                                            dangerouslySetInnerHTML={{
-                                              __html:
-                                                renderContentWithMath(
-                                                  cleanBody,
-                                                ),
-                                            }}
-                                          />
-                                          {parsed.options.length > 0 && (
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-                                              {parsed.options.map(
-                                                (opt, idx) => (
-                                                  <div
-                                                    key={`${opt.label}-${idx}`}
-                                                    className="flex items-start gap-1.5 py-0.5"
-                                                  >
-                                                    <span className="font-bold text-indigo-600 shrink-0">
-                                                      {opt.label}.
-                                                    </span>
-                                                    <div
-                                                      className="preview-content text-slate-700 text-left w-full whitespace-normal break-words overflow-x-auto"
-                                                      dangerouslySetInnerHTML={{
-                                                        __html:
-                                                          renderContentWithMath(
-                                                            opt.text,
-                                                          ),
-                                                      }}
-                                                    />
-                                                  </div>
-                                                ),
-                                              )}
-                                            </div>
-                                          )}
-                                        </>
-                                      );
-                                    })()}
-                                  </div>
-                                </div>
-                              )}
                             </div>
 
                             {/* Right Frame: Answer and Solution */}
@@ -5519,23 +5724,6 @@ ${bodyHtml}
                                 placeholder="VD: Chọn B. Giao điểm với trục hoành có $y = 0 \implies x + 1 = 0 \implies x = -1$."
                                 className="w-full bg-slate-50/40 border border-slate-200 rounded-xl p-3 text-xs md:text-sm text-slate-800 focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white outline-none font-normal leading-relaxed overflow-y-auto"
                               />
-                              {tracNghiemAnswerText.trim() && (
-                                <div className="mt-1.5 p-3 rounded-xl bg-slate-50/40 border border-dashed border-slate-200 text-xs text-slate-800 max-h-[220px] overflow-y-auto">
-                                  <span className="text-[10px] font-bold text-emerald-650 uppercase tracking-wider block mb-1.5 select-none flex items-center gap-1">
-                                    <span>👁️</span> Xem trước đáp án giải chi
-                                    tiết:
-                                  </span>
-                                  <div
-                                    className="preview-content font-normal text-left whitespace-normal break-words overflow-x-auto select-text"
-                                    dangerouslySetInnerHTML={{
-                                      __html:
-                                        renderContentWithMath(
-                                          tracNghiemAnswerText,
-                                        ),
-                                    }}
-                                  />
-                                </div>
-                              )}
                             </div>
                           </div>
 
@@ -5565,24 +5753,10 @@ ${bodyHtml}
                       ) : (
                         /* Generic TWO SIDE-BY-SIDE INPUT FRAMES for other query types */
                         <div className="space-y-1.5">
-                          <div className="flex justify-between items-center mb-1">
+                          <div className="mb-1">
                             <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                               {newQuestionType === "trac_nghiem_dung_sai" ? "Khung nhập câu hỏi Trắc nghiệm Đúng/Sai" : newQuestionType === "trac_nghiem_tra_loi_ngan" ? "Khung nhập câu hỏi Trắc nghiệm Trả lời ngắn" : "Khung nhập câu hỏi tự luận"}
                             </label>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setShowSmartPasteModal(true)}
-                                className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-2.5 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1"
-                                title="Dán câu hỏi và đáp án từ AI để tự động phân tách"
-                              >
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-                                Dán thông minh (AI)
-                              </button>
-                              <span className="text-[10px] text-slate-400 italic hidden md:inline-block">
-                                Đáp án có thể bỏ trống
-                              </span>
-                            </div>
                           </div>
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -5613,23 +5787,6 @@ ${bodyHtml}
                                 }
                                 className="w-full bg-slate-50/40 border border-slate-200 rounded-xl p-3 text-xs md:text-sm text-slate-800 focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white outline-none font-normal leading-relaxed"
                               />
-                              {(newQuestionType === "trac_nghiem_dung_sai" ? dungSaiText : newQuestionType === "trac_nghiem_tra_loi_ngan" ? traLoiNganText : tuLuanQuestionText).trim() && (
-                                <div className="mt-1.5 p-3 rounded-xl bg-slate-50/40 border border-dashed border-slate-200 text-xs text-slate-800 max-h-[200px] overflow-y-auto">
-                                  <span className="text-[10px] font-bold text-indigo-650 uppercase tracking-wider block mb-1.5 select-none flex items-center gap-1">
-                                    <span>👁️</span> Xem trước nội dung câu hỏi:
-                                  </span>
-                                  <div
-                                    className="preview-content font-normal text-left whitespace-normal break-words overflow-x-auto select-text"
-                                    dangerouslySetInnerHTML={{
-                                      __html: renderContentWithMath(
-                                        getCleanQuestionBody(
-                                          newQuestionType === "trac_nghiem_dung_sai" ? dungSaiText : newQuestionType === "trac_nghiem_tra_loi_ngan" ? traLoiNganText : tuLuanQuestionText
-                                        ),
-                                      ),
-                                    }}
-                                  />
-                                </div>
-                              )}
                             </div>
 
                             {/* Right Frame: Answer Text - OPTIONAL */}
@@ -5658,22 +5815,6 @@ ${bodyHtml}
                                 }
                                 className="w-full bg-slate-50/40 border border-slate-200 rounded-xl p-3 text-xs md:text-sm text-slate-800 focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white outline-none font-normal leading-relaxed"
                               />
-                              {(newQuestionType === "trac_nghiem_dung_sai" ? dungSaiAnswerText : newQuestionType === "trac_nghiem_tra_loi_ngan" ? traLoiNganAnswerText : tuLuanAnswerText).trim() && (
-                                <div className="mt-1.5 p-3 rounded-xl bg-slate-50/40 border border-dashed border-slate-200 text-xs text-slate-800 max-h-[200px] overflow-y-auto">
-                                  <span className="text-[10px] font-bold text-emerald-650 uppercase tracking-wider block mb-1.5 select-none flex items-center gap-1">
-                                    <span>👁️</span> Xem trước đáp án giải chi
-                                    tiết:
-                                  </span>
-                                  <div
-                                    className="preview-content font-normal text-left whitespace-normal break-words overflow-x-auto select-text"
-                                    dangerouslySetInnerHTML={{
-                                      __html: renderContentWithMath(
-                                        newQuestionType === "trac_nghiem_dung_sai" ? dungSaiAnswerText : newQuestionType === "trac_nghiem_tra_loi_ngan" ? traLoiNganAnswerText : tuLuanAnswerText
-                                      ),
-                                    }}
-                                  />
-                                </div>
-                              )}
                             </div>
                           </div>
                         </div>
@@ -5718,178 +5859,283 @@ ${bodyHtml}
                         </button>
                       </div>
 
-                      <div className="border-t border-slate-100 pt-4 space-y-2">
-                        <span className="text-xs font-bold text-slate-500 block">
-                          Danh sách câu hỏi đã lưu ({docQuestions.length})
-                        </span>
+                      <div className="border-t border-slate-100 pt-4 space-y-3">
+                        <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:justify-between">
+                          <span className="text-xs font-extrabold text-slate-700 tracking-wide uppercase flex items-center gap-1.5">
+                            <span className="inline-block w-2 h-2 rounded-full bg-slate-400" />
+                            Danh sách câu hỏi đã lưu ({docQuestions.length})
+                          </span>
+                        </div>
+
+                        {docQuestions.length > 0 && (
+                          <div className="flex flex-wrap gap-1 bg-slate-100/60 p-1 rounded-xl text-[10px] font-bold">
+                            <button
+                              type="button"
+                              onClick={() => setSavedQuestionTab("all")}
+                              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-all ${
+                                savedQuestionTab === "all"
+                                  ? "bg-white text-slate-800 shadow-xs border border-slate-200/50"
+                                  : "text-slate-500 hover:text-slate-800"
+                              }`}
+                            >
+                              Tất cả ({docQuestions.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSavedQuestionTab("trac_nghiem")}
+                              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1 ${
+                                savedQuestionTab === "trac_nghiem"
+                                  ? "bg-white text-blue-700 shadow-xs border border-blue-100"
+                                  : "text-slate-500 hover:text-blue-600"
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                              TN 4 Lựa chọn ({tracNghiemList.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSavedQuestionTab("trac_nghiem_dung_sai")}
+                              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1 ${
+                                savedQuestionTab === "trac_nghiem_dung_sai"
+                                  ? "bg-white text-purple-700 shadow-xs border border-purple-100"
+                                  : "text-slate-500 hover:text-purple-600"
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                              TN Đúng/Sai ({dungSaiList.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSavedQuestionTab("trac_nghiem_tra_loi_ngan")}
+                              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1 ${
+                                savedQuestionTab === "trac_nghiem_tra_loi_ngan"
+                                  ? "bg-white text-teal-700 shadow-xs border border-teal-100"
+                                  : "text-slate-500 hover:text-teal-600"
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                              TN Trả lời ngắn ({traLoiNganList.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSavedQuestionTab("tu_luan")}
+                              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1 ${
+                                savedQuestionTab === "tu_luan"
+                                  ? "bg-white text-rose-700 shadow-xs border border-rose-100"
+                                  : "text-slate-500 hover:text-rose-600"
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                              Tự luận ({tuLuanList.length})
+                            </button>
+                          </div>
+                        )}
+
                         {docQuestions.length === 0 ? (
                           <p className="text-xs text-slate-400 italic">
                             Chưa có câu hỏi nào được lưu. Hãy thêm câu đầu tiên
                             ở trên!
                           </p>
                         ) : (
-                          <div className="max-h-[212px] overflow-y-auto overflow-x-auto border border-slate-200/60 rounded-xl">
-                            <table className="w-full text-left text-xs border-collapse">
-                              <thead>
-                                <tr className="bg-slate-50 text-slate-500 border-b border-slate-200/80">
-                                  <th className="p-2.5">Thứ tự</th>
-                                  <th className="p-2.5">Phân loại</th>
-                                  <th className="p-2.5">Cột đáp án</th>
-                                  <th className="p-2.5">Nội dung tóm tắt</th>
-                                  <th className="p-2.5 text-center">
-                                    Thao tác
-                                  </th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {docQuestions.map((q, idx) => {
-                                  const isEditing = editingQuestionId === q.id;
-                                  return (
-                                    <tr
-                                      key={q.id}
-                                      className={`border-b border-slate-100 last:border-0 transition-colors ${
-                                        isEditing
-                                          ? "bg-amber-50/60 hover:bg-amber-100/50 border-l-[3px] border-l-amber-500"
-                                          : "hover:bg-slate-50/50"
-                                      }`}
-                                    >
-                                      <td
-                                        onClick={() =>
-                                          handleStartEditQuestion(q)
-                                        }
-                                        className={`p-2.5 font-bold cursor-pointer hover:text-indigo-600 transition-colors ${
-                                          isEditing
-                                            ? "text-amber-700"
-                                            : "text-slate-600"
-                                        }`}
-                                        title="Bấm để chỉnh sửa câu hỏi này"
-                                      >
-                                        {(() => {
-                                          const sameTypeQuestions =
-                                            docQuestions.filter(
-                                              (item) => item.type === q.type,
-                                            );
-                                          const displayNum =
-                                            sameTypeQuestions.findIndex(
-                                              (item) => item.id === q.id,
-                                            ) + 1;
-                                          const typeSuffix =
-                                            q.type === "trac_nghiem"
-                                              ? "TN"
-                                              : "TL";
-                                          return `Câu ${displayNum} (${typeSuffix})`;
-                                        })()}
-                                      </td>
-                                      <td
-                                        onClick={() =>
-                                          handleStartEditQuestion(q)
-                                        }
-                                        className="p-2.5 cursor-pointer"
-                                        title="Bấm để chỉnh sửa câu hỏi này"
-                                      >
-                                        <span
-                                          className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-slate-100 text-slate-700 border border-slate-200"
+                          (() => {
+                            const filteredQuestions = docQuestions.filter((q) => {
+                              if (savedQuestionTab === "all") return true;
+                              return q.type === savedQuestionTab;
+                            });
+
+                            if (filteredQuestions.length === 0) {
+                              return (
+                                <p className="text-xs text-slate-400 italic p-4 text-center border border-dashed border-slate-200 rounded-xl bg-slate-50/30">
+                                  Không có câu hỏi nào thuộc phân loại này.
+                                </p>
+                              );
+                            }
+
+                            const borderColors: Record<string, string> = {
+                              trac_nghiem: "border-l-[3px] border-l-blue-500",
+                              trac_nghiem_dung_sai: "border-l-[3px] border-l-purple-500",
+                              trac_nghiem_tra_loi_ngan: "border-l-[3px] border-l-teal-500",
+                              tu_luan: "border-l-[3px] border-l-rose-500",
+                            };
+
+                            return (
+                              <div className="max-h-[225px] overflow-y-auto overflow-x-auto border border-slate-200/60 rounded-xl">
+                                <table className="w-full text-left text-xs border-collapse">
+                                  <thead>
+                                    <tr className="bg-slate-50 text-slate-500 border-b border-slate-200/80 sticky top-0 z-10 shadow-3xs">
+                                      <th className="p-2.5">Thứ tự</th>
+                                      <th className="p-2.5">Phân loại</th>
+                                      <th className="p-2.5">Cột đáp án</th>
+                                      <th className="p-2.5">Nội dung tóm tắt</th>
+                                      <th className="p-2.5 text-center">
+                                        Thao tác
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {filteredQuestions.map((q) => {
+                                      const isEditing = editingQuestionId === q.id;
+                                      const origIdx = docQuestions.findIndex((item) => item.id === q.id);
+                                      return (
+                                        <tr
+                                          key={q.id}
+                                          className={`border-b border-slate-100 last:border-0 transition-colors ${
+                                            isEditing
+                                              ? "bg-amber-50/60 hover:bg-amber-100/50 border-l-[4px] border-l-amber-500"
+                                              : `hover:bg-slate-50/50 ${borderColors[q.type] || ""}`
+                                          }`}
                                         >
-                                          {q.type === "trac_nghiem"
-                                            ? "TN 4 Lựa chọn"
-                                            : q.type === "trac_nghiem_dung_sai"
-                                            ? "TN Đúng/Sai"
-                                            : q.type === "trac_nghiem_tra_loi_ngan"
-                                            ? "TN Trả lời ngắn"
-                                            : "Tự luận"}
-                                        </span>
-                                      </td>
-                                      <td className="p-2.5">
-                                        {q.type === "trac_nghiem" ? (
-                                          <div className="inline-flex gap-0.5 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                                            {[1, 2, 4].map((c) => (
-                                              <button
-                                                key={c}
-                                                onClick={() =>
-                                                  handleUpdateQuestionColumns(
-                                                    q.id,
-                                                    c,
-                                                  )
-                                                }
-                                                className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                                  (q.columns || 4) === c
-                                                    ? "bg-slate-700 text-white shadow-xs"
-                                                    : "text-slate-500 hover:text-slate-800"
-                                                }`}
-                                              >
-                                                {c}C
-                                              </button>
-                                            ))}
-                                          </div>
-                                        ) : (
-                                          <span className="text-slate-400 font-medium italic">
-                                            -
-                                          </span>
-                                        )}
-                                      </td>
-                                      <td
-                                        onClick={() =>
-                                          handleStartEditQuestion(q)
-                                        }
-                                        className="p-2.5 text-slate-500 truncate max-w-[130px] cursor-pointer hover:text-slate-850 transition-colors"
-                                        title="Bấm để chỉnh sửa câu hỏi này"
-                                      >
-                                        {getCleanQuestionBody(q.questionText)}
-                                      </td>
-                                      <td className="p-2.5 text-center">
-                                        <div className="inline-flex items-center gap-1.5">
-                                          <button
-                                            onClick={() =>
-                                              handleMoveQuestion(idx, "up")
-                                            }
-                                            disabled={idx === 0}
-                                            className="p-1 text-slate-400 hover:text-slate-650 disabled:opacity-30 cursor-pointer text-xs"
-                                            title="Di chuyển lên"
-                                          >
-                                            ▲
-                                          </button>
-                                          <button
-                                            onClick={() =>
-                                              handleMoveQuestion(idx, "down")
-                                            }
-                                            disabled={
-                                              idx === docQuestions.length - 1
-                                            }
-                                            className="p-1 text-slate-400 hover:text-slate-650 disabled:opacity-30 cursor-pointer text-xs"
-                                            title="Di chuyển xuống"
-                                          >
-                                            ▼
-                                          </button>
-                                          <button
+                                          <td
                                             onClick={() =>
                                               handleStartEditQuestion(q)
                                             }
-                                            className={`p-1 rounded cursor-pointer transition-colors ${
+                                            className={`p-2.5 font-bold cursor-pointer hover:text-indigo-600 transition-colors ${
                                               isEditing
-                                                ? "text-amber-600 bg-amber-100 hover:bg-amber-200"
-                                                : "text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                                ? "text-amber-700"
+                                                : "text-slate-600"
                                             }`}
-                                            title="Chỉnh sửa câu hỏi này"
+                                            title="Bấm để chỉnh sửa câu hỏi này"
                                           >
-                                            Sửa
-                                          </button>
-                                          <button
+                                            {(() => {
+                                              const sameTypeQuestions =
+                                                docQuestions.filter(
+                                                  (item) => item.type === q.type,
+                                                );
+                                              const displayNum =
+                                                sameTypeQuestions.findIndex(
+                                                  (item) => item.id === q.id,
+                                                ) + 1;
+                                              const typeSuffix =
+                                                q.type === "trac_nghiem"
+                                                  ? "TN"
+                                                  : q.type === "trac_nghiem_dung_sai"
+                                                  ? "Đ/S"
+                                                  : q.type === "trac_nghiem_tra_loi_ngan"
+                                                  ? "TLN"
+                                                  : "TL";
+                                              return `Câu ${displayNum} (${typeSuffix})`;
+                                            })()}
+                                          </td>
+                                          <td
                                             onClick={() =>
-                                              handleDeleteQuestion(q.id)
+                                              handleStartEditQuestion(q)
                                             }
-                                            className="p-1 text-rose-500 hover:text-rose-700 rounded hover:bg-rose-50 cursor-pointer text-xs font-bold"
-                                            title="Xóa"
+                                            className="p-2.5 cursor-pointer"
+                                            title="Bấm để chỉnh sửa câu hỏi này"
                                           >
-                                            Xóa
-                                          </button>
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
+                                            <span
+                                              className={`px-2 py-0.5 rounded text-[10px] font-extrabold border ${
+                                                q.type === "trac_nghiem"
+                                                  ? "bg-blue-50 text-blue-700 border-blue-150"
+                                                  : q.type === "trac_nghiem_dung_sai"
+                                                  ? "bg-purple-50 text-purple-700 border-purple-150"
+                                                  : q.type === "trac_nghiem_tra_loi_ngan"
+                                                  ? "bg-teal-50 text-teal-700 border-teal-150"
+                                                  : "bg-rose-50 text-rose-700 border-rose-150"
+                                              }`}
+                                            >
+                                              {q.type === "trac_nghiem"
+                                                ? "TN 4 Lựa chọn"
+                                                : q.type === "trac_nghiem_dung_sai"
+                                                ? "TN Đúng/Sai"
+                                                : q.type === "trac_nghiem_tra_loi_ngan"
+                                                ? "TN Trả lời ngắn"
+                                                : "Tự luận"}
+                                            </span>
+                                          </td>
+                                          <td className="p-2.5">
+                                            {q.type === "trac_nghiem" ? (
+                                              <div className="inline-flex gap-0.5 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                                                {[1, 2, 4].map((c) => (
+                                                  <button
+                                                    key={c}
+                                                    onClick={() =>
+                                                      handleUpdateQuestionColumns(
+                                                        q.id,
+                                                        c,
+                                                      )
+                                                    }
+                                                    className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
+                                                      (q.columns || 4) === c
+                                                        ? "bg-slate-700 text-white shadow-xs"
+                                                        : "text-slate-500 hover:text-slate-800"
+                                                    }`}
+                                                  >
+                                                    {c}C
+                                                  </button>
+                                                ))}
+                                              </div>
+                                            ) : (
+                                              <span className="text-slate-400 font-medium italic">
+                                                -
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td
+                                            onClick={() =>
+                                              handleStartEditQuestion(q)
+                                            }
+                                            className="p-2.5 text-slate-500 truncate max-w-[130px] cursor-pointer hover:text-slate-850 transition-colors"
+                                            title="Bấm để chỉnh sửa câu hỏi này"
+                                          >
+                                            {getCleanQuestionBody(q.questionText)}
+                                          </td>
+                                          <td className="p-2.5 text-center">
+                                            <div className="inline-flex items-center gap-1.5">
+                                              <button
+                                                onClick={() =>
+                                                  handleMoveQuestion(origIdx, "up")
+                                                }
+                                                disabled={savedQuestionTab !== "all" || origIdx === 0}
+                                                className="p-1 text-slate-400 hover:text-slate-650 disabled:opacity-30 cursor-pointer text-xs"
+                                                title={savedQuestionTab !== "all" ? "Chỉ di chuyển được ở tab Tất cả" : "Di chuyển lên"}
+                                              >
+                                                ▲
+                                              </button>
+                                              <button
+                                                onClick={() =>
+                                                  handleMoveQuestion(origIdx, "down")
+                                                }
+                                                disabled={
+                                                  savedQuestionTab !== "all" || origIdx === docQuestions.length - 1
+                                                }
+                                                className="p-1 text-slate-400 hover:text-slate-650 disabled:opacity-30 cursor-pointer text-xs"
+                                                title={savedQuestionTab !== "all" ? "Chỉ di chuyển được ở tab Tất cả" : "Di chuyển xuống"}
+                                              >
+                                                ▼
+                                              </button>
+                                              <button
+                                                onClick={() =>
+                                                  handleStartEditQuestion(q)
+                                                }
+                                                className={`p-1 rounded cursor-pointer transition-colors ${
+                                                  isEditing
+                                                    ? "text-amber-600 bg-amber-100 hover:bg-amber-200"
+                                                    : "text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                                }`}
+                                                title="Chỉnh sửa câu hỏi này"
+                                              >
+                                                Sửa
+                                              </button>
+                                              <button
+                                                onClick={() =>
+                                                  handleDeleteQuestion(q.id)
+                                                }
+                                                className="p-1 text-rose-500 hover:text-rose-700 rounded hover:bg-rose-50 cursor-pointer text-xs font-bold"
+                                                title="Xóa"
+                                              >
+                                                Xóa
+                                              </button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            );
+                          })()
                         )}
                       </div>
                     </div>
@@ -5955,7 +6201,7 @@ ${bodyHtml}
                                   borderCollapse: "collapse",
                                   border: "none",
                                 }}
-                                className="w-full border-none text-xs md:text-sm"
+                                className="doc-header-table w-full border-none text-xs md:text-sm"
                               >
                                 <tbody>
                                   <tr style={{ border: "none" }}>
@@ -6039,9 +6285,11 @@ ${bodyHtml}
                                         className="doc-question-item space-y-2"
                                       >
                                         <div className="flex items-start gap-1">
-                                          <span className="doc-type-badge font-bold text-slate-900 select-none shrink-0">
-                                            Câu {displayNum}.
-                                          </span>
+                                          {!hasQuestionPrefix(cleanBody) && (
+                                            <span className="doc-type-badge font-bold text-slate-900 select-none shrink-0">
+                                              Câu {displayNum}.
+                                            </span>
+                                          )}
                                           <div
                                             className="text-slate-850 font-normal leading-relaxed overflow-x-auto select-all w-full text-left"
                                             dangerouslySetInnerHTML={{
@@ -6128,9 +6376,11 @@ ${bodyHtml}
                                         className="doc-question-item space-y-3"
                                       >
                                         <div className="flex items-start gap-1">
-                                          <span className="doc-type-badge font-bold text-slate-900 select-none shrink-0">
-                                            Câu {displayNum}.
-                                          </span>
+                                          {!hasQuestionPrefix(cleanText) && (
+                                            <span className="doc-type-badge font-bold text-slate-900 select-none shrink-0">
+                                              Câu {displayNum}.
+                                            </span>
+                                          )}
                                           <div
                                             className="text-slate-850 font-normal leading-relaxed overflow-x-auto select-all w-full text-left"
                                             dangerouslySetInnerHTML={{
@@ -6182,9 +6432,11 @@ ${bodyHtml}
                                         className="doc-question-item space-y-3"
                                       >
                                         <div className="flex items-start gap-1">
-                                          <span className="doc-type-badge font-bold text-slate-900 select-none shrink-0">
-                                            Câu {displayNum}.
-                                          </span>
+                                          {!hasQuestionPrefix(cleanText) && (
+                                            <span className="doc-type-badge font-bold text-slate-900 select-none shrink-0">
+                                              Câu {displayNum}.
+                                            </span>
+                                          )}
                                           <div
                                             className="text-slate-850 font-normal leading-relaxed overflow-x-auto select-all w-full text-left"
                                             dangerouslySetInnerHTML={{
@@ -6236,9 +6488,11 @@ ${bodyHtml}
                                         className="doc-question-item space-y-3"
                                       >
                                         <div className="flex items-start gap-1">
-                                          <span className="doc-type-badge font-bold text-indigo-600 select-none shrink-0">
-                                            Câu {displayNum}.
-                                          </span>
+                                          {!hasQuestionPrefix(cleanText) && (
+                                            <span className="doc-type-badge font-bold text-indigo-600 select-none shrink-0">
+                                              Câu {displayNum}.
+                                            </span>
+                                          )}
                                           <div
                                             className="text-slate-850 font-normal leading-relaxed overflow-x-auto select-all w-full text-left"
                                             dangerouslySetInnerHTML={{
@@ -6319,41 +6573,104 @@ ${bodyHtml}
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                     <h3 className="font-bold text-slate-800 text-sm md:text-base tracking-tight">
-                      Dán thông minh từ AI
+                      Dán thông minh từ AI (Bước {smartPasteStep}/2)
                     </h3>
                   </div>
                   <button
-                    onClick={() => setShowSmartPasteModal(false)}
+                    onClick={closeSmartPasteModal}
                     className="text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 p-1.5 rounded-lg transition-colors cursor-pointer"
                   >
                     ✕
                   </button>
                 </div>
                 <div className="p-5 md:p-6 flex-1 flex flex-col gap-4">
-                  <p className="text-sm text-slate-600 font-medium leading-relaxed">
-                    Hãy dán nguyên bản toàn bộ phản hồi từ AI (bao gồm cả đề bài, các đáp án và lời giải). Hệ thống sẽ tự động phân tách và sắp xếp chúng vào đúng các ô nhập liệu cho bạn. Các lỗi logic định dạng cũng sẽ tự động được sửa.
-                  </p>
-                  <textarea
-                    value={smartPasteText}
-                    onChange={(e) => setSmartPasteText(e.target.value)}
-                    onPaste={(e) => handlePasteGeneric(e, setSmartPasteText, true)}
-                    placeholder="Dán (Ctrl+V) toàn bộ nội dung câu hỏi và đáp án từ ChatGPT/Gemini vào đây..."
-                    className="w-full h-64 p-4 text-sm rounded-xl border border-slate-200 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-slate-50"
-                  />
-                  <div className="flex justify-end gap-3 mt-2">
-                    <button
-                      onClick={() => setShowSmartPasteModal(false)}
-                      className="px-4 py-2 text-slate-600 font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg text-sm transition-colors"
-                    >
-                      Hủy bỏ
-                    </button>
-                    <button
-                      onClick={handleSmartPasteProcess}
-                      className="px-5 py-2 text-white font-bold bg-emerald-600 hover:bg-emerald-700 rounded-lg text-sm shadow-md transition-colors"
-                    >
-                      Phân tách & Nhập
-                    </button>
-                  </div>
+                  {smartPasteStep === 1 ? (
+                    <>
+                      <p className="text-sm text-slate-600 font-medium leading-relaxed">
+                        Hãy dán nguyên bản toàn bộ phản hồi từ AI (bao gồm cả đề bài, các đáp án và lời giải). Hệ thống sẽ tự động phân tách và sắp xếp chúng vào đúng các ô nhập liệu cho bạn. Các định dạng in đậm, in nghiêng và LaTeX sẽ được giữ nguyên.
+                      </p>
+                      <textarea
+                        value={smartPasteText}
+                        onChange={(e) => setSmartPasteText(e.target.value)}
+                        onPaste={(e) => handlePasteGeneric(e, setSmartPasteText, true)}
+                        placeholder="Dán (Ctrl+V) toàn bộ nội dung câu hỏi và đáp án từ ChatGPT/Gemini vào đây..."
+                        className="w-full h-64 p-4 text-sm rounded-xl border border-slate-200 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-slate-50"
+                      />
+                      <div className="flex justify-end gap-3 mt-2">
+                        <button
+                          onClick={closeSmartPasteModal}
+                          className="px-4 py-2 text-slate-600 font-semibold bg-slate-100 hover:bg-slate-200 rounded-lg text-sm transition-colors cursor-pointer"
+                        >
+                          Hủy bỏ
+                        </button>
+                        <button
+                          onClick={handleSmartPasteProcess}
+                          className="px-5 py-2 text-white font-bold bg-emerald-600 hover:bg-emerald-700 rounded-lg text-sm shadow-md transition-colors cursor-pointer"
+                        >
+                          Phân tách & Xem trước
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm text-slate-600 font-medium leading-relaxed">
+                        Kết quả phân tách tự động dưới đây. Vui lòng xem trước các định dạng. Nếu đã chính xác, hãy bấm nút <strong>"Xác nhận nạp vào đề"</strong> để tiến hành nhập vào đề thi chính thức.
+                      </p>
+                      
+                      <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1 border border-slate-100 rounded-xl p-3 bg-slate-50/50">
+                        {parsedPreviewQuestions.map((q, index) => (
+                          <div key={q.id || index} className="p-4 bg-white rounded-xl border border-slate-250 shadow-2xs text-left relative overflow-hidden">
+                            <div className="flex justify-between items-center mb-2.5">
+                              <span className="font-bold text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg uppercase tracking-wider">
+                                Câu hỏi {index + 1} ({q.type === 'trac_nghiem' ? 'Trắc nghiệm' : q.type === 'trac_nghiem_dung_sai' ? 'Đúng/Sai' : q.type === 'trac_nghiem_tra_loi_ngan' ? 'Trả lời ngắn' : 'Tự luận'})
+                              </span>
+                            </div>
+                            <div className="space-y-3">
+                              <div>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">📝 Nội dung câu hỏi:</span>
+                                <div 
+                                  className="text-xs md:text-sm text-slate-800 leading-relaxed font-normal whitespace-pre-wrap select-all bg-slate-50/50 p-2.5 rounded-lg border border-slate-100"
+                                  dangerouslySetInnerHTML={{ __html: renderContentWithMath(q.questionText) }}
+                                />
+                              </div>
+                              {q.answerText && (
+                                <div className="pt-2 border-t border-slate-100">
+                                  <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block mb-1">🔑 Đáp án / Lời giải:</span>
+                                  <div 
+                                    className="text-xs text-slate-750 leading-relaxed font-normal whitespace-pre-wrap select-all bg-indigo-50/20 p-2.5 rounded-lg border border-indigo-50/50"
+                                    dangerouslySetInnerHTML={{ __html: renderContentWithMath(q.answerText) }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="flex justify-between gap-3 mt-2">
+                        <button
+                          onClick={() => setSmartPasteStep(1)}
+                          className="px-4 py-2 text-slate-700 font-bold bg-slate-100 hover:bg-slate-200 border border-slate-250 rounded-lg text-sm transition-colors cursor-pointer"
+                        >
+                          ← Quay lại chỉnh sửa
+                        </button>
+                        <div className="flex gap-3">
+                          <button
+                            onClick={closeSmartPasteModal}
+                            className="px-4 py-2 text-slate-600 font-semibold bg-slate-50 hover:bg-slate-100 rounded-lg text-sm transition-colors cursor-pointer"
+                          >
+                            Hủy bỏ
+                          </button>
+                          <button
+                            onClick={handleSmartPasteProcess}
+                            className="px-5 py-2 text-white font-bold bg-emerald-600 hover:bg-emerald-700 rounded-lg text-sm shadow-md transition-colors cursor-pointer"
+                          >
+                            Xác nhận nạp vào đề
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </motion.div>
             </div>
@@ -6480,6 +6797,72 @@ ${bodyHtml}
                       className="w-full p-4 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none focus:border-blue-600 text-sm placeholder:text-slate-400 text-slate-700 leading-relaxed font-normal bg-linear-to-b from-slate-50/40 to-white"
                       placeholder="Hãy ghi chi tiết trải nghiệm của bạn, các tính năng mong muốn, góp ý giao diện hoặc mô tả lỗi nếu có..."
                     />
+                  </div>
+
+                  {/* Image Attachment (Góp ý bằng hình) */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block">
+                      Đính kèm hình ảnh minh họa (nếu có)
+                    </label>
+                    
+                    {!feedbackImage ? (
+                      <div className="relative group border-2 border-dashed border-slate-200 hover:border-blue-400 rounded-xl p-4 transition-all bg-slate-50/50 hover:bg-blue-50/10 flex flex-col items-center justify-center cursor-pointer min-h-[90px]">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.size > 2 * 1024 * 1024) {
+                                triggerToast("Kích thước ảnh tối đa 2MB", false);
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                if (event.target?.result) {
+                                  setFeedbackImage(event.target.result as string);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                        <Image className="w-6 h-6 text-slate-400 group-hover:text-blue-500 mb-1 transition-colors" />
+                        <span className="text-xs font-semibold text-slate-600 group-hover:text-blue-600 transition-colors">
+                          Kéo thả hoặc nhấp để chọn ảnh
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          Hỗ trợ PNG, JPG, JPEG (tối đa 2MB)
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="relative rounded-xl border border-slate-200 overflow-hidden bg-slate-50 flex items-center justify-between p-3">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={feedbackImage}
+                            alt="Ảnh đính kèm"
+                            className="w-14 h-14 object-cover rounded-lg border border-slate-150"
+                          />
+                          <div>
+                            <span className="text-xs font-bold text-slate-700 block">
+                              Hình ảnh đã chọn
+                            </span>
+                            <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                              <Check className="w-3 h-3" /> Đã đính kèm thành công
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setFeedbackImage("")}
+                          className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          title="Gỡ ảnh này"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Submit button */}
@@ -6677,6 +7060,38 @@ ${bodyHtml}
             </div>
           )}
         </AnimatePresence>
+
+        {/* Image Preview Lightbox Overlay */}
+        <AnimatePresence>
+          {previewImageSrc && (
+            <div
+              className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50 select-none cursor-zoom-out"
+              onClick={() => setPreviewImageSrc(null)}
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="relative max-w-4xl max-h-[85vh] overflow-hidden rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => setPreviewImageSrc(null)}
+                  className="absolute top-4 right-4 z-50 p-2 bg-slate-950/80 hover:bg-slate-900 text-white rounded-full transition-colors cursor-pointer border border-slate-800 font-bold text-sm w-9 h-9 flex items-center justify-center"
+                  title="Đóng xem ảnh"
+                >
+                  ✕
+                </button>
+                <img
+                  src={previewImageSrc}
+                  alt="Xem thử hình ảnh"
+                  className="max-w-full max-h-[85vh] object-contain select-text"
+                />
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Footer */}
@@ -6687,7 +7102,7 @@ ${bodyHtml}
             <strong className="text-slate-800 font-semibold">
               Trần Gia Thiều - Giathieu110406@gmail.com
             </strong>{" "}
-            · Phiên bản v3.5
+            · Phiên bản v3.6
           </p>
           <p className="text-[11px] text-slate-400 font-medium">
             © Q-Builder · Số hóa công thức LaTeX · Tự động hóa xây dựng đề thi ·

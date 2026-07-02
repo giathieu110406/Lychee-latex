@@ -72,8 +72,21 @@ div.katex-custom-wrapper {
 .preview-content p {
   line-height: 1.15 !important;
   font-size: 13pt !important;
+  margin-top: 0 !important;
   margin-bottom: 0.75em;
   word-break: break-word;
+}
+
+/* Make KaTeX math formulas render bold when inside a strong or b element */
+.preview-content strong .katex-custom-wrapper,
+.preview-content strong .katex, 
+.preview-content strong .katex *,
+.preview-content b .katex-custom-wrapper,
+.preview-content b .katex, 
+.preview-content b .katex * {
+  font-weight: bold !important;
+  -webkit-text-stroke: 0.4px currentColor;
+  text-shadow: 0.1px 0 0 currentColor;
 }
 
 .preview-content h1 {

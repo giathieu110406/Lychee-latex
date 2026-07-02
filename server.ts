@@ -491,6 +491,54 @@ HÃY ÁP DỤNG NGHIÊM NGẶT CÁC QUY TẮC SAU:
   }
 });
 
+// 3.6. API: AI Canvas Assistant
+app.post("/api/gemini-canvas", async (req, res) => {
+  try {
+    const { text, prompt } = req.body;
+    
+    if (!text && !prompt) {
+      return res.status(400).json({ error: "Thiếu dữ liệu" });
+    }
+
+    console.log("[Gemini API] Đang gửi yêu cầu Trợ lý AI Canvas...");
+
+    // Call Gemini API using retry logic to process text with user prompt
+    const response = await generateContentWithRetry({
+      model: "gemini-3.1-flash-lite", // standard highly-available fast model
+      contents: `Nội dung Canvas hiện tại:\n${text || ""}\n\nYêu cầu thực hiện:\n${prompt}`,
+      config: {
+        systemInstruction: `Bạn là trợ lý AI Canvas chuyên nghiệp. Nhiệm vụ của bạn là thực hiện chỉnh sửa, dịch thuật, thêm lời giải chi tiết, in đậm từ khóa hoặc tạo câu hỏi tương tự từ văn bản hiện tại được cung cấp bởi người dùng.
+HÃY TUÂN THỦ CÁC QUY TẮC CHẶT CHẼ SAU:
+1. Đảm bảo giữ nguyên các công thức toán học LaTeX dạng $...$ hoặc $$...$$ trừ khi có yêu cầu thay đổi trực tiếp liên quan đến công thức.
+2. Đảm bảo cấu trúc Markdown (bảng biểu, in đậm, tiêu đề, danh sách) được giữ nguyên vẹn và hiển thị chính xác.
+3. Chỉ trả về trực tiếp kết quả văn bản sau khi đã sửa đổi. Tuyệt đối KHÔNG giải thích dông dài, KHÔNG thêm lời chào hay lời cảm ơn, KHÔNG bọc trong khối \`\`\`markdown ... \`\`\`.`,
+      }
+    });
+
+    let fixedText = response.text || "";
+    fixedText = fixedText.trim();
+    
+    // Clean any outer markdown code block wrapper if the model still returns it
+    if (fixedText.startsWith("```markdown")) {
+      fixedText = fixedText.slice(11);
+      if (fixedText.endsWith("```")) {
+        fixedText = fixedText.slice(0, -3);
+      }
+    } else if (fixedText.startsWith("```")) {
+      fixedText = fixedText.slice(3);
+      if (fixedText.endsWith("```")) {
+        fixedText = fixedText.slice(0, -3);
+      }
+    }
+    fixedText = fixedText.trim();
+
+    return res.json({ success: true, fixedText });
+  } catch (error: any) {
+    console.error("Lỗi trợ lý AI Canvas:", error);
+    return res.status(500).json({ error: error.message || "Lỗi máy chủ khi gọi trợ lý AI Canvas" });
+  }
+});
+
 // 4. API: Compile LaTeX to PDF via standard fast LaTeX compiler
 app.post("/api/compile-latex", async (req, res) => {
   try {
