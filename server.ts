@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, updateDoc, getDoc } from "firebase/firestore";
 import crypto from "crypto";
@@ -739,6 +738,7 @@ app.post("/api/compile-latex", async (req, res) => {
 async function startServer() {
   // Vite developer middleware for rendering Vite React client assets
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa"

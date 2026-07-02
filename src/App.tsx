@@ -4386,8 +4386,17 @@ ${bodyHtml}
         }),
       });
 
+      let errorMessage = "Không thể kết nối đến Trợ lý AI Canvas";
       if (!res.ok) {
-        throw new Error("Không thể kết nối đến Trợ lý AI Canvas");
+        try {
+          const errData = await res.json();
+          if (errData && errData.error) {
+            errorMessage = `Lỗi trợ lý AI: ${errData.error}`;
+          }
+        } catch (e) {
+          // Fallback if not JSON
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await res.json();
