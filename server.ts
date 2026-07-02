@@ -11,15 +11,26 @@ import mammoth from "mammoth";
 
 dotenv.config();
 
-// Initialize Google GenAI client
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
+// Initialize Google GenAI client lazily to avoid crashing on startup if key is missing
+let aiClient: GoogleGenAI | null = null;
+
+function getAiClient(): GoogleGenAI {
+  if (!aiClient) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("Không thể kết nối đến Trợ lý AI Canvas. Vui lòng cấu hình GEMINI_API_KEY trong biến môi trường.");
     }
+    aiClient = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
-});
+  return aiClient;
+}
 
 const getFallbackApiKey = () => {
   // Split to prevent GitHub API key scanning tools from falsely flagging this public Firebase client key
@@ -282,7 +293,8 @@ async function generateContentWithRetry(params: any, retries = 3, delay = 1500) 
     for (const model of modelsToTry) {
       try {
         console.log(`[Gemini API] Đang gửi yêu cầu phân tích đề thi bằng model: ${model} (Lần thử ${attempt}/${retries})`);
-        const response = await ai.models.generateContent({
+        const aiInstance = getAiClient();
+        const response = await aiInstance.models.generateContent({
           ...params,
           model: model
         });
