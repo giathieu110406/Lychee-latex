@@ -4394,7 +4394,8 @@ ${bodyHtml}
             errorMessage = `Lỗi trợ lý AI: ${errData.error}`;
           }
         } catch (e) {
-          // Fallback if not JSON
+         // Fallback if not JSON (e.g., Vercel returns HTML error page)
+          errorMessage = `Lỗi máy chủ (${res.status}): Không thể nhận phản hồi JSON từ API. Vui lòng kiểm tra xem bạn đã cấu hình biến môi trường GEMINI_API_KEY trên Vercel Dashboard chưa.`;
         }
         throw new Error(errorMessage);
       }

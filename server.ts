@@ -278,6 +278,11 @@ app.post("/api/notify-approval", async (req, res) => {
 // 3. API: Parse exam file contents to structured JSON using Gemini API
 // Helper to call Gemini with robust retry mechanism & fallback models to handle 503 Service Unavailable gracefully
 async function generateContentWithRetry(params: any, retries = 3, delay = 1500) {
+  // Fail-fast: check if GEMINI_API_KEY is configured before attempting retries
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error("Không thể kết nối đến Trợ lý AI Canvas. Vui lòng cấu hình GEMINI_API_KEY trong biến môi trường.");
+  }
+
   let lastError = null;
   // Try the requested model first, then fall back to highly-available standard models if unavailable
   const modelsToTry = [
@@ -303,7 +308,12 @@ async function generateContentWithRetry(params: any, retries = 3, delay = 1500) 
         console.warn(`[Gemini API] Thử nghiệm model ${model} thất bại (Lần thử ${attempt}/${retries}):`, error.message || error);
         
         // If it's an API key or configuration error, do not retry other models, throw immediately
-        if (error.message?.includes("API_KEY_INVALID") || error.status === 403) {
+        if (
+          error.message?.includes("API_KEY_INVALID") ||
+          error.message?.includes("cấu hình GEMINI_API_KEY") ||
+          error.status === 403 ||
+          error.status === 401
+        ) {
           throw error;
         }
         
